@@ -135,5 +135,3 @@ If the POC is successful and warrants production development:
 - [Vercel AI SDK](https://sdk.vercel.ai/docs)
 - [Ollama API Documentation](https://github.com/ollama/ollama/blob/main/docs/api.md)
 - [OpenRouter API](https://openrouter.ai/docs)
-- [Project Tech Stack](../../../ideas/ollama-agent-manager/docs/tech-stack.md)
-- [Local Coding Models Research](../../../resources/research/local-coding-models-2025-2026.md)
