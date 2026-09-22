@@ -1,0 +1,25 @@
+{
+  "name": "my-react-router-app",
+  "version": "1.0.0",
+  "description": "",
+  "main": "index.js",
+  "scripts": {
+    "test": "echo \"Error: no test specified\" && exit 1"
+  },
+  "keywords": [],
+  "author": "",
+  "license": "ISC",
+  "type": "commonjs",
+  "dependencies": {
+    "@react-router/node": "^8.3.1",
+    "@react-router/serve": "^8.3.1",
+    "isbot": "^5.2.2",
+    "react": "^19.2.8",
+    "react-dom": "^19.2.8",
+    "react-router": "^8.3.1"
+  },
+  "devDependencies": {
+    "@react-router/dev": "^8.3.1",
+    "vite": "^8.2.2"
+  }
+}
