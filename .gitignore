@@ -6,4 +6,4 @@ __pycache__/
 *.py[cod]
 
 # Generated experiment outputs
-experiments/ollama-chat/test-results/
+scratch/ollama-chat/test-results/

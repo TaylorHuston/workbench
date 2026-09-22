@@ -1,1 +1,0 @@
-Learning experiments that don't directly come from a soure. Things that may graduate into an actual project at some point.

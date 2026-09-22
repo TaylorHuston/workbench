@@ -1,1 +1,0 @@
-Mostly tutorials that are pulled directly from a YouTube video.

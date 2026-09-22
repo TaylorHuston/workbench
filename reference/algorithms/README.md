@@ -23,17 +23,13 @@ algorithms/
 ├── trees/                # Tree data structures
 │   └── java/             # BST, Symbol tables
 │
-├── shortest-path/        # Path-finding algorithms
-│   └── java/             # Dijkstra, Kruskal MST, Prim MST
-│
-└── interview-prep/       # Interview problem solutions
-    └── cracking-the-coding-interview/
+└── shortest-path/        # Path-finding algorithms
+    └── java/             # Dijkstra, Kruskal MST, Prim MST
 ```
 
 ## Sources
 
 - **Algorithms, 4th Edition** by Sedgewick & Wayne - Most Java implementations
-- **Cracking the Coding Interview** - Interview prep problems
 - **Eloquent JavaScript** - JS implementations
 
 ## Notes

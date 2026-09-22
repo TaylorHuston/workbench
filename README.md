@@ -1,79 +1,49 @@
-# 🔬 Learning Lab
+# Workbench
 
-> **Owner:** Taylor Huston
-> **Focus:** Continuous learning, architectural experiments, and technology evaluations.
+A public workspace for small technical examples, structured learning exercises, and exploratory code that does not need a standalone repository or the full Story-Driven Development workflow.
 
-## 📖 About This Repository
-This repository serves as a centralized "monorepo" for my ongoing technical research. It contains prototypes, proofs of concept (PoCs), and study notes. Tutorials I have followed along with, exercises from books, one-off experiments. Most subprojects are intentionally minimal and disposable. This is not a portfolio repository, but a workspace for hands-on learning and technical evaluation. Embracing "learning in public." Currently pulling in and consolidating older projects from my GitHub, basically putting them all under one roof instead of cluttering up my GitHub with 20 disparate "Hello World" apps.
+## Sections
 
-> **Note:** Projects herein range from "Hello World" syntax checks to complex architectural prototypes. Please check the individual README in each subdirectory for context and scope. Projects may be "graduated" to standalone things if they're interesting enough.
+### [`reference/`](reference/)
 
-## 🌟 Featured Experiments
-*If you are short on time, these are the most substantive projects in this lab:*
+Curated examples intended to be useful after the original learning session. Reference material should be understandable in isolation, narrowly scoped, and maintained as the canonical example for its subject within this repository.
 
-_TBD_
+Current collections:
 
-| Project | Stack | Research Goal |
-| :--- | :--- | :--- |
+- [`algorithms/`](reference/algorithms/) — classic algorithms and data structures
+- [`frameworks/`](reference/frameworks/) — canonical framework and library examples
+- [`interview-prep/`](reference/interview-prep/) — programming interview exercises
+- [`programming-cliffnotes/`](reference/programming-cliffnotes/) — language, syntax, and foundational tooling examples
 
+### [`learning/`](learning/)
 
-## 📂 Directory Structure
+Code, exercises, and notes produced while following books, tutorials, and courses. Source attribution and the original structure should be preserved when useful.
 
-```
-learning-lab/
-├── algorithms/                 # Classic algorithms & data structures (2014-2015, consolidated from multiple disparate repos)
-│   ├── sorting/                # QuickSort, MergeSort, HeapSort (Java, JS)
-│   ├── linked-lists/           # Linked list implementations (Java, JS)
-│   ├── stacks-queues/          # Stack, Queue, PriorityQueue (Java)
-│   ├── graphs/                 # BFS, DFS, Topological, SCC (Java)
-│   ├── trees/                  # BST, Symbol tables (Java)
-│   ├── shortest-path/          # Dijkstra, Kruskal, Prim MST (Java)
-│   └── interview-prep/         # Cracking the Coding Interview solutions
-│
-├── books/                      # Book exercises and follow-alongs
-│   ├── head-first-python/      # Head First Python exercises
-│   └── learn-enough-python/    # Learn Enough Python To Be Dangerous (2024-01-21)
-│
-├── courses/                    # Structured course materials
-│   ├── devops-directive/
-│   │   ├── docker-course/      # Complete Docker Course (2024-01-24)
-│   │   └── terraform-course/   # Complete Terraform Course (2024-01-18)
-│   └── linkedin-learning/
-│       └── learning-terraform/ # LinkedIn Learning Terraform (2023-10-14)
-│
-├── experiments/                # One-off experiments and PoCs
-│   └── ollama-agent-manager/   # Multi-agent LLM chat experiment (2026-01-11)
-│
-├── standalone/                 # Miscellaneous standalone projects
-│   ├── programming-cliffnotes/ # Quick reference notes for various languages
-│   └── terraform-test/         # Terraform test files - AWS & GCP (2024-02-09)
-│
-├── tutorials/                  # Official tutorial follow-alongs
-│   ├── convex-tutorial/        # Convex getting started
-│   ├── flask-tutorial/         # Official Flask tutorial (Flaskr) (2024-01-25)
-│   └── nextjs-dashboard/       # Next.js App Router tutorial
-│
-└── youtube/                    # YouTube tutorial projects
-    ├── free-code-camp/
-    │   └── jovian-careers/     # Flask careers app tutorial (2024-03-05)
-    └── tech-with-tim/
-        ├── js-slot-machine/    # JavaScript slot machine (2023-03-28)
-        └── python-slot-machine/# Python slot machine (2023-03-20)
-```
+Learning material is grouped by source type:
 
-*Dates in parentheses indicate last update of original repo before consolidation where applicable*
+- [`books/`](learning/books/)
+- [`courses/`](learning/courses/)
+- [`tutorials/`](learning/tutorials/)
+- [`youtube/`](learning/youtube/)
 
----
+### [`scratch/`](scratch/)
 
-## Naming conventions:
-_Since this repo will contain many different languages, the naming convention is currently very inconsistent, but this is what I am going to trend towards over time._
+In-progress experiments, spikes, proofs of concept, and disposable investigations. New unsorted experimental work belongs here by default.
 
-Use lowercase kebab-case for all top-level directories, workspace names, package names, documentation files, scripts, and general-purpose files.
+A scratch project may later:
 
-Inside language-specific projects, follow the idiomatic convention of that language or framework, preferring lowercase kebab-case if there are no strong conventions otherwise.
+- be discarded when the question has been answered;
+- move to `reference/` when it becomes a canonical example; or
+- graduate to a standalone repository and the SDD workflow when it becomes a durable application or product effort.
 
-Do not create paths that differ only by case.
+## Repository conventions
 
-## ⚖️ License & Disclaimer
-Unless otherwise noted, code in this repository is available under the MIT License.
-*Note: Some sub-directories may be based on tutorials or external courseware. In those cases, the original author is credited in the respective README.*
+- Keep each project self-contained and add a local README when its purpose or source is not obvious.
+- Use lowercase kebab-case for new directories and general-purpose files unless a language or framework has a stronger convention.
+- Do not create paths that differ only by case.
+- Keep generated dependencies, local runtime state, credentials, and secrets out of Git.
+- Preserve attribution and upstream licensing for material based on books, courses, tutorials, or third-party examples.
+
+## License
+
+Unless otherwise noted, original code in this repository is available under the MIT License. Individual learning projects may include or derive from third-party material with separate attribution or license terms; consult the nearest README or license file.
