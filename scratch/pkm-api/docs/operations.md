@@ -128,7 +128,7 @@ The worker rejected a URL, redirect, port, or resolved address under SSRF policy
 
 ### `unsupportedSource`
 
-The worker found no usable schema.org JobPosting data. Add a tested source-specific adapter instead of storing arbitrary page text.
+The worker found no usable schema.org JobPosting data or supported source-specific public markup. Add a tested, host-confined adapter instead of storing arbitrary page text.
 
 ### `possibleRepost`
 

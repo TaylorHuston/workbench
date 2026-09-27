@@ -14,7 +14,7 @@ Implemented:
 - cursor pagination, lifecycle filtering, terminal-record retention, and content-minimized events;
 - transactional SQLite migrations, future-schema rejection, fenced leases, attempts, retries, and backoff;
 - SSRF-resistant HTTPS retrieval with DNS/IP validation, pinned connections, redirect revalidation, timeouts, and size/type limits;
-- bounded schema.org `JobPosting` extraction and read-only Markdown deduplication;
+- bounded schema.org `JobPosting` extraction, a host/path-confined LinkedIn public-markup fallback, and read-only Markdown deduplication;
 - an automatic single-consumer in-process worker that wakes after submissions, resumes durable queued work at startup, and applies safe retrieval, bounded extraction, redirect reconciliation, and deduplication;
 - subscription-backed Codex assessment in a fresh ephemeral broker with an environment allowlist, isolated `CODEX_HOME`, denied tools, denied vault/home filesystem access, disabled tool networking, and a mandatory live adversarial isolation probe;
 - strict structured assessment validation plus a temporary, evidence-minimized materialization candidate for retry-safe writes, cleared at terminal completion;

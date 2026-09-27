@@ -23,7 +23,7 @@ A lifespan-managed single-consumer worker composes the processing application co
 ```text
 claim fenced lease
   -> retrieve through validated public HTTPS destination
-  -> extract bounded schema.org JobPosting proposal
+  -> extract bounded JobPosting proposal from schema.org or confined source markup
   -> reconcile final redirect identity and preserve source aliases
   -> compare exact identity/possible reposts against Markdown
   -> call AssessmentPort through an ephemeral tool-denied broker
@@ -71,7 +71,7 @@ The write boundary must still recheck authoritative posting identity when materi
 
 `SafeHttpJobSourceRetriever` requires HTTPS/443, rejects URL credentials and local names, resolves and rejects any non-global answer, connects to a validated IP while retaining TLS SNI/Host, revalidates up to three redirects, sends no caller credentials, accepts a small content-type allowlist, and enforces one 15-second end-to-end deadline across DNS plus every redirect alongside a 2 MiB response bound. It rejects malformed or negative declared lengths.
 
-The extractor consumes schema.org `JobPosting` JSON-LD and emits bounded evidence. It does not persist descriptions or invent absent facts. Unsupported pages terminate explicitly rather than falling back to arbitrary scraping.
+The extractor prefers schema.org `JobPosting` JSON-LD and emits bounded evidence. LinkedIn job-view pages may use a source-specific fallback that captures only the claimed posting's bounded public title, company, location, and description classes after host, path, and job-ID checks. It does not persist descriptions or invent absent facts. Unsupported pages terminate explicitly rather than falling back to arbitrary scraping.
 
 ## Controlled Markdown reads
 

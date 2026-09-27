@@ -5,9 +5,10 @@ import re
 from contextlib import suppress
 from html.parser import HTMLParser
 from typing import Any
+from urllib.parse import urlsplit
 
 from pkm_api.application.job_processing import RetrievedJobSource, SkipJobLead
-from pkm_api.domain.job_leads import JobLead
+from pkm_api.domain.job_leads import JobLead, JobLeadSource
 from pkm_api.domain.job_postings import (
     JobPostingProposal,
     SalaryRange,
@@ -16,14 +17,41 @@ from pkm_api.domain.job_postings import (
 )
 
 _WHITESPACE = re.compile(r"\s+")
+_LINKEDIN_PUBLIC_FIELDS = {
+    "top-card-layout__title": ("role", 300),
+    "topcard__org-name-link": ("company", 200),
+    "topcard__flavor--bullet": ("location", 500),
+    "show-more-less-html__markup": ("description", 20_000),
+}
+_VOID_ELEMENTS = frozenset(
+    {
+        "area",
+        "base",
+        "br",
+        "col",
+        "embed",
+        "hr",
+        "img",
+        "input",
+        "link",
+        "meta",
+        "param",
+        "source",
+        "track",
+        "wbr",
+    }
+)
+_LINKEDIN_JOB_PATH = re.compile(r"/jobs/view/(?:[^/]*-)?(\d+)/?")
 
 
 class LinkedInJsonLdJobPostingExtractor:
-    """Extract bounded identity and evidence from schema.org JobPosting data."""
+    """Extract bounded identity and evidence from public job-posting markup."""
 
     def extract(self, source: RetrievedJobSource, lead: JobLead) -> JobPostingProposal:
         documents = self._documents(source)
         posting = _find_job_posting(documents)
+        if posting is None:
+            posting = _linkedin_public_posting(source, lead)
         if posting is None:
             raise SkipJobLead(
                 "unsupportedSource",
@@ -109,6 +137,67 @@ class _JsonLdParser(HTMLParser):
         self._parts = []
 
 
+class _LinkedInPublicMarkupParser(HTMLParser):
+    def __init__(self) -> None:
+        super().__init__(convert_charrefs=True)
+        self.values: dict[str, str] = {}
+        self._field: str | None = None
+        self._maximum = 0
+        self._container_tag: str | None = None
+        self._container_depth = 0
+        self._length = 0
+        self._parts: list[str] = []
+
+    def handle_starttag(self, tag: str, attrs: list[tuple[str, str | None]]) -> None:
+        normalized_tag = tag.lower()
+        if self._field is not None:
+            if normalized_tag in _VOID_ELEMENTS:
+                self._append(" ")
+            elif normalized_tag == self._container_tag:
+                self._container_depth += 1
+            return
+
+        values = {key.lower(): (value or "") for key, value in attrs}
+        classes = frozenset(values.get("class", "").split())
+        for class_name, (field, maximum) in _LINKEDIN_PUBLIC_FIELDS.items():
+            if class_name in classes and field not in self.values:
+                self._field = field
+                self._maximum = maximum
+                self._container_tag = normalized_tag
+                self._container_depth = 1
+                self._length = 0
+                self._parts = []
+                return
+
+    def handle_data(self, data: str) -> None:
+        if self._field is not None:
+            self._append(data)
+
+    def handle_endtag(self, tag: str) -> None:
+        if self._field is None or tag.lower() != self._container_tag:
+            return
+        self._container_depth -= 1
+        if self._container_depth > 0:
+            return
+        value = _clean_text(" ".join(self._parts), maximum=self._maximum)
+        if value:
+            self.values[self._field] = value
+        self._field = None
+        self._maximum = 0
+        self._container_tag = None
+        self._container_depth = 0
+        self._length = 0
+        self._parts = []
+
+    def _append(self, value: str) -> None:
+        remaining = self._maximum - self._length
+        if remaining <= 0:
+            return
+        bounded = value[:remaining]
+        self._parts.append(bounded)
+        self._length += len(bounded)
+
+
 class _VisibleTextParser(HTMLParser):
     def __init__(self) -> None:
         super().__init__(convert_charrefs=True)
@@ -116,6 +205,39 @@ class _VisibleTextParser(HTMLParser):
 
     def handle_data(self, data: str) -> None:
         self.parts.append(data)
+
+
+def _linkedin_public_posting(
+    source: RetrievedJobSource,
+    lead: JobLead,
+) -> dict[str, Any] | None:
+    parsed = urlsplit(source.final_url)
+    hostname = (parsed.hostname or "").lower()
+    path_match = _LINKEDIN_JOB_PATH.fullmatch(parsed.path)
+    expected_id = (lead.posting_key or "").removeprefix("linkedin:")
+    if (
+        lead.source is not JobLeadSource.LINKEDIN
+        or not (hostname == "linkedin.com" or hostname.endswith(".linkedin.com"))
+        or path_match is None
+        or path_match.group(1) != expected_id
+    ):
+        return None
+    parser = _LinkedInPublicMarkupParser()
+    parser.feed(source.body.decode("utf-8", errors="replace"))
+    role = parser.values.get("role")
+    company = parser.values.get("company")
+    if not role or not company:
+        return None
+    posting: dict[str, Any] = {
+        "@type": "JobPosting",
+        "title": role,
+        "hiringOrganization": {"name": company},
+        "description": parser.values.get("description", ""),
+    }
+    location = parser.values.get("location")
+    if location:
+        posting["applicantLocationRequirements"] = {"name": location}
+    return posting
 
 
 def _find_job_posting(value: object) -> dict[str, Any] | None:
