@@ -3,7 +3,7 @@
 Local-first FastAPI service for controlled, composable job-tracking workflows. It exposes a durable **JobLead** control plane plus read-only, bounded views of authoritative Markdown **JobPostings**. Markdown remains authoritative; SQLite stores workflow state only.
 
 > [!WARNING]
-> Inbound authentication is not implemented. The packaged server rejects non-loopback bind addresses. Do not expose it directly to a LAN, tailnet, reverse proxy, or the public internet.
+> Inbound application authentication is not implemented. The packaged server rejects non-loopback bind addresses. GB10's Linux filesystem-isolation probe now passes, but the **live model tool-denial preflight still fails closed** (zero hook attempts). Do not run it against the GB10 vault or expose it through a reverse proxy yet. The intended personal-use boundary, once verified, is loopback behind tailnet-only Tailscale Serve HTTPS, never direct LAN access or Funnel. See [the GB10 promotion hold](docs/operations.md#gb10-promotion-hold-2026-09-27).
 
 ## Status
 
@@ -27,7 +27,7 @@ Remaining security holds:
 - The direct local Codex-thread design remains prohibited. The worker uses only the isolated broker, marks posting content as untrusted external input, rejects any attempted tool use, strips inherited environment variables before starting Codex, and destroys broker state after each assessment. Its mandatory startup probe must observe a denied tool attempt, no disclosure from a protected home path, and deterministic Codex-sandbox read denials for home, the vault, source/global Codex configuration, and both source and broker-linked authentication paths before any lead is claimed.
 - Company/JobPosting writes are enabled only when a vault-backed worker is configured. They are confined to the canonical job-market paths and were rehearsed against disposable vault fixtures; do not point an unreviewed deployment at another vault layout.
 - Processing-log rows for duplicate, skipped, and failed outcomes remain a follow-up; materialized postings currently write the `added` row.
-- Inbound authentication, authorization, rate limiting, signed events, and remote exposure remain deferred.
+- GB10 passes 98 Linux tests and the deterministic five-path sandbox probe after Taylor installed the reviewed AppArmor exception. The live adversarial model probe still records zero blocked tool attempts, so deployment is blocked. See the scope, rollback, and status in `docs/operations.md`. Tailnet access and n8n submission remain disabled. Broader application authentication and production-style controls remain deferred for this personal-use system.
 
 See [`docs/api.md`](docs/api.md), [`docs/architecture.md`](docs/architecture.md), and [`docs/operations.md`](docs/operations.md).
 
@@ -162,7 +162,8 @@ PKM_API_CONTROL_DB=.local/pkm-api.sqlite3 \
 
 ## Promotion gates
 
-1. Add client authentication, scoped authorization, rate limiting, and audit retention.
-2. Threat-model Tailscale/LAN exposure and configure the trusted TLS boundary.
-3. Add duplicate/skipped/failed processing-log rows and separately reported index reconciliation.
-4. Decide maintained repository and SDD ownership.
+1. Resolve the GB10 live Codex probe's zero tool-attempt result without weakening the assessment isolation policy; rerun all Linux tests and require the live preflight to record a denied attempt.
+2. Run one vault-backed worker on GB10 with control SQLite outside Syncthing; back up the vault and verify the synced single-writer policy.
+3. For the personal tailnet only, proxy the loopback listener through tailnet-only Tailscale Serve HTTPS with trusted-device/account access; keep Funnel and direct LAN binding disabled. A shared write token is optional defense in depth.
+4. Verify one end-to-end manual n8n submission and an idempotent replay before routine use. Keep the workflow inactive/manual-only.
+5. Add duplicate/skipped/failed processing-log rows and decide maintained repository ownership separately.

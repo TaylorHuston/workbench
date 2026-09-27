@@ -2,9 +2,9 @@
 
 ## Prerequisites
 
-- macOS user with access to the private vault;
+- A host user with access to the private vault (the first live canary ran on macOS; GB10 Linux promotion is not yet verified);
 - Python 3.12 or later;
-- `uv`.
+- `uv` and an existing, host-local ChatGPT-backed Codex login.
 
 Codex authentication is required by the subscription-backed assessment worker:
 
@@ -75,16 +75,41 @@ Shutdown signals the consumer, closes an active isolated Codex app server, and l
 
 Do not replace this with a normal local Codex thread, enable approvals, copy `auth.json`, mount credentials into Docker, add a probe bypass, or rely only on prompt instructions. Materialization must remain deterministic and confined; tests use disposable vaults and must never target the live vault.
 
+## GB10 promotion hold (2026-09-27)
+
+The GB10 checkout and vault mirror are present. The Python environment is **outside** Syncthing at `~/.local/share/pkm-api/venv` (`UV_PROJECT_ENVIRONMENT`); Codex authentication checked as `chatgpt`. Ubuntu's `unprivileged_userns` restriction originally blocked bubblewrap from creating an isolated loopback interface. Taylor installed the executable-specific AppArmor exception below without disabling the global restriction. On Linux, Codex's nested deny mounts and home-installed binary then blocked sandbox setup; the broker now collapses only redundant descendant denies and copies the trusted executable into its owner-only ephemeral workspace. **98 tests, Ruff, formatting, and compilation pass on GB10; the real filesystem probe denies all five protected paths.** The separate *live adversarial model probe* still fails closed: the turn completes without attempting a tool (`blockedToolAttempts=0`), so the `PreToolUse` hook cannot be confirmed. Read-only GB10 app-server diagnostics found the effective `assessment` permission profile, `readOnly` sandbox with network disabled, and one enabled `PreToolUse` hook reported as untrusted by `hooks/list`; the thread passes `bypass_hook_trust=true`. A temporary trust decision for the empty broker workspace and a one-off run with the host CLI 0.157.1 (instead of bundled 0.156.0) each still produced zero hook attempts. Neither experiment changed global Codex configuration or the pinned service binary. Terminal Codex's `my-life` trust decision does not transfer to the ephemeral broker. The API remains stopped, with no Tailscale route or n8n submission. Do not remove the zero-attempt guard or infer that the worker is ready from the deterministic probe.
+
+Do not start the vault-backed API, install an auto-start service, configure Tailscale Serve for it, or enable n8n submission until the Linux tests and live isolation preflight **both** pass. The user-approved `deploy/gb10-bwrap.apparmor` was syntax-checked on GB10 and installed by Taylor at `/etc/apparmor.d/pkm-api-bwrap`; its root-owned installed bytes match the staged SHA-256 below. It leaves Ubuntu's global restriction enabled. AppArmor attaches by executable path: the exception is **not PKM-specific** and can affect other unconfined `/usr/bin/bwrap` executions; already-confined callers depend on their own exec-transition rules. No sudo credentials are available to the agent. **The following is the already-performed install/recovery procedure, not a request to reinstall it now.** If reinstalling after a rollback, Taylor must run this conditional chain directly on GB10, entering the password there, never in chat. The SHA-256 pins the staged bytes to the reviewed `deploy/gb10-bwrap.apparmor`. Stop and investigate any mismatch, failed step, or unexpected profile status:
+
+```bash
+staged=/home/taylor/.local/share/pkm-api/gb10-bwrap.apparmor
+installed=/etc/apparmor.d/pkm-api-bwrap
+printf '%s  %s\n' \
+  '63ad72e0a17881ce7b7333856e3a8dcae3da7796bf4353c224dba1941ac61e96' \
+  "$staged" | sha256sum --check --status && \
+  sudo install -o root -g root -m 0644 "$staged" "$installed" && \
+  sudo cmp -s "$staged" "$installed" && \
+  sudo apparmor_parser -r "$installed" && \
+  sudo grep -E '^pkm-api-bwrap \(' /sys/kernel/security/apparmor/profiles
+```
+
+If a post-copy step fails, the file in `/etc/apparmor.d/` may still load on reboot; **do not assume a failed install is rolled back**. To remove the exception after installation (or after a partial install), run the following chain. If unloading fails, preserve the file and investigate; if removal fails, the file can reload on reboot. Confirm the profile is absent before reporting rollback complete:
+
+```bash
+installed=/etc/apparmor.d/pkm-api-bwrap
+sudo apparmor_parser -R "$installed" && \
+  sudo rm "$installed" && \
+  ! sudo grep -q -E '^pkm-api-bwrap \(' /sys/kernel/security/apparmor/profiles && \
+  echo 'pkm-api-bwrap unloaded and removed'
+```
+
+A dry-run syntax check or loaded profile alone is not proof of filesystem or network confinement. The deterministic probe now passes, but the live hook test must record at least one denied model tool attempt before any vault-backed API launch. Keep the control DB outside Syncthing, verify a single automatic writer and a vault backup, and test the loopback service before adding tailnet access.
+
 ## n8n integration
 
-Until inbound authentication exists, n8n may submit to the loopback service only through the local Docker host bridge:
+The discovery workflow is manual/inactive and its JobLead submission node is disabled. Its `host.docker.internal` URL is a historical local-bridge placeholder, **not** a working path from GB10 n8n to the Mac-hosted API. Do not enable it until the GB10 service is healthy and the node has been updated and tested against the actual destination. Send one `sourceUrl`, `discoveredBy`, optional opaque `sourceReference`, and deterministic `Idempotency-Key` per item; never send arrays, descriptions, email bodies, or Codex credentials.
 
-- method: `POST`;
-- URL: `http://host.docker.internal:8000/v1/job-leads`;
-- `Idempotency-Key`: deterministic discovery-run/item key;
-- body: one `sourceUrl`, `discoveredBy`, and optional opaque `sourceReference`.
-
-Do not send arrays, scraped descriptions, email bodies, cookies, or credentials. A committed submission automatically wakes the API's worker; n8n must not receive Codex credentials or perform assessment. Do not expose the API through Tailscale until application authentication and authorization exist.
+For this personal use, the accepted future boundary is a loopback-only API behind tailnet-only Tailscale Serve HTTPS with access limited to Taylor's trusted devices/account and Funnel disabled. An additional shared write token is optional. This is a future promotion target, not an authorization to expose the current, unverified Linux service.
 
 ## SQLite handling
 
@@ -134,6 +159,6 @@ The worker found no usable schema.org JobPosting data or supported source-specif
 
 Company/role matches lacked exact identity. No write occurs; identity needs a common ATS ID or verified redirect.
 
-## Production exclusions
+## Exposure exclusions
 
-This is not ready for a remote listener. Confined automatic Markdown writes are enabled for the configured local vault; keep a backup and do not change the canonical job-market layout without updating the materializer tests. Remote promotion still requires inbound auth and scopes, rate limiting, structured privacy-safe diagnostics, release packaging, and explicit repository/SDD ownership. Re-run the live isolation check after every Codex SDK/runtime or broker-policy change.
+Do not bind the API directly to a non-loopback interface, enable Tailscale Funnel, or publish a Docker/LAN port. Confined automatic Markdown writes require a backup and the unchanged canonical job-market layout. The GB10 Linux sandbox blocker above must be resolved and the live isolation check must pass before a tailnet-only Serve proxy is considered. Re-run that check after every Codex SDK/runtime or broker-policy change. Broader auth, scopes, and operational controls are deferred unless the personal-tailnet trust boundary expands.

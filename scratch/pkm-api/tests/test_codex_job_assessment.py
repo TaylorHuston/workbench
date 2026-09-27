@@ -187,8 +187,12 @@ def test_assessor_uses_ephemeral_tool_denied_isolated_codex_thread(
     assert thread_config["permissions"]["assessment"]["network"] == {"enabled": False}
     filesystem = thread_config["permissions"]["assessment"]["filesystem"]
     assert filesystem[str(Path.home().resolve())] == "deny"
-    assert filesystem[str((tmp_path / "vault").resolve())] == "deny"
-    assert filesystem[str(auth.parent.resolve())] == "deny"
+    for protected in ((tmp_path / "vault").resolve(), auth.parent.resolve()):
+        assert any(
+            protected.is_relative_to(Path(path))
+            for path, permission in filesystem.items()
+            if permission == "deny"
+        )
     assert isinstance(fake.thread.run_input, ExternalMessage)
     assert fake.thread.run_input.tool_name == "untrusted_job_posting"
     assert "Build internal deployment automation." in fake.thread.run_input.content
@@ -295,6 +299,79 @@ def test_assessor_rejects_non_chatgpt_authentication_inside_broker(
 
     assert raised.value.code == "assessmentUnavailable"
     assert raised.value.retryable is True
+
+
+def test_redundant_deny_mounts_are_removed_without_losing_coverage(
+    tmp_path: Path,
+) -> None:
+    home = tmp_path / "home"
+    vault = home / "vault"
+    auth = home / "codex" / "auth.json"
+    other = tmp_path / "external-vault"
+
+    assert codex_job_assessment._minimal_deny_roots(
+        (home, auth, vault, auth.parent, other, other)
+    ) == (home, other)
+    assert set(codex_job_assessment._minimal_deny_roots((other, auth, home))) == {
+        home,
+        other,
+    }
+
+
+def test_linux_broker_executes_a_private_copy_inside_its_workspace(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    bundled = tmp_path / "installed" / "codex"
+    bundled.parent.mkdir()
+    bundled.write_bytes(b"fake executable")
+    workspace = tmp_path / "broker" / "workspace"
+    workspace.mkdir(parents=True)
+    monkeypatch.setattr(codex_job_assessment, "bundled_codex_path", lambda: bundled)
+
+    executable = codex_job_assessment._sandbox_visible_executable(
+        workspace, platform="linux"
+    )
+
+    assert executable == workspace / "codex"
+    assert executable.read_bytes() == bundled.read_bytes()
+    assert executable.stat().st_mode & 0o777 == 0o500
+    assert (
+        codex_job_assessment._sandbox_visible_executable(workspace, platform="darwin")
+        == bundled
+    )
+
+
+def test_linux_workspace_launches_its_private_executable_copy(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    bundled = tmp_path / "installed" / "codex"
+    bundled.parent.mkdir()
+    bundled.write_bytes(b"fake executable")
+    auth = tmp_path / "auth.json"
+    auth.write_text("fake credential")
+    monkeypatch.setattr(codex_job_assessment, "bundled_codex_path", lambda: bundled)
+    copy_executable = codex_job_assessment._sandbox_visible_executable
+    monkeypatch.setattr(
+        codex_job_assessment,
+        "_sandbox_visible_executable",
+        lambda working_directory: copy_executable(working_directory, platform="linux"),
+    )
+    assessor = IsolatedCodexJobAssessor(
+        policy_text="POLICY",
+        candidate_context="CANDIDATE",
+        role_archetypes={"platform-infrastructure-devops"},
+        auth_file=auth,
+        vault_root=tmp_path / "vault",
+    )
+
+    with assessor._workspace() as isolated:
+        launch_args = isolated.config.launch_args_override
+        binary = Path(launch_args[launch_args.index("app-server") - 1])
+        assert binary == isolated.working_directory / "codex"
+        assert binary == isolated.codex_executable
+        assert binary.read_bytes() == bundled.read_bytes()
+        assert binary.stat().st_mode & 0o777 == 0o500
+    assert not binary.exists()
 
 
 def test_filesystem_probe_denies_home_vault_auth_and_global_config(

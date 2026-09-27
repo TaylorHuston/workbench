@@ -2,6 +2,8 @@
 
 A public workspace for small technical examples, structured learning exercises, and exploratory code that does not need a standalone repository or the full Story-Driven Development workflow.
 
+IMPORTANT: As a workspace, nothing in here needs to follow any of of our established branch rules, sdd-workflow, or other best practices/guidelines.
+
 ## Sections
 
 ### [`reference/`](reference/)

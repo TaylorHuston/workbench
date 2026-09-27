@@ -5,6 +5,7 @@ import os
 import re
 import secrets
 import shlex
+import shutil
 import subprocess
 import sys
 import tempfile
@@ -82,6 +83,7 @@ class _IsolationWorkspace:
     codex_home: Path
     working_directory: Path
     hook_counter: Path
+    codex_executable: Path
     config: CodexConfig
     thread_config: dict[str, Any]
 
@@ -336,6 +338,7 @@ class IsolatedCodexJobAssessor:
             working_directory = root / "workspace"
             codex_home.mkdir(mode=0o700)
             working_directory.mkdir(mode=0o700)
+            codex_executable = _sandbox_visible_executable(working_directory)
             (codex_home / "auth.json").symlink_to(self._auth_file)
             hook_counter = root / "blocked-tools.count"
             hook_script = codex_home / "deny_tools.py"
@@ -363,6 +366,7 @@ class IsolatedCodexJobAssessor:
                     root=root,
                     codex_home=codex_home,
                     hook_counter=hook_counter,
+                    codex_executable=codex_executable,
                 ),
                 "app-server",
                 "--listen",
@@ -373,6 +377,7 @@ class IsolatedCodexJobAssessor:
                 codex_home=codex_home,
                 working_directory=working_directory,
                 hook_counter=hook_counter,
+                codex_executable=codex_executable,
                 config=CodexConfig(
                     cwd=str(working_directory),
                     launch_args_override=launch_args,
@@ -413,6 +418,25 @@ def _read_regular_file(
     return resolved.read_text(encoding="utf-8")
 
 
+def _minimal_deny_roots(paths: Collection[Path]) -> tuple[Path, ...]:
+    """Avoid nested deny mounts beneath an already denied parent on Linux."""
+    roots: list[Path] = []
+    for path in sorted(
+        (value.resolve() for value in paths), key=lambda p: len(p.parts)
+    ):
+        if not any(path.is_relative_to(root) for root in roots):
+            roots.append(path)
+    return tuple(roots)
+
+
+def _denied_paths(
+    *, codex_home: Path, vault_root: Path, auth_file: Path
+) -> tuple[Path, ...]:
+    return _minimal_deny_roots(
+        (Path.home(), codex_home, vault_root, auth_file.parent, auth_file)
+    )
+
+
 def _thread_config(
     *,
     working_directory: Path,
@@ -422,11 +446,12 @@ def _thread_config(
 ) -> dict[str, Any]:
     filesystem: dict[str, Any] = {
         ":minimal": "read",
-        str(Path.home().resolve()): "deny",
-        str(codex_home.resolve()): "deny",
-        str(vault_root.resolve()): "deny",
-        str(auth_file.parent.resolve()): "deny",
-        str(auth_file.resolve()): "deny",
+        **{
+            str(path): "deny"
+            for path in _denied_paths(
+                codex_home=codex_home, vault_root=vault_root, auth_file=auth_file
+            )
+        },
         ":workspace_roots": {".": "read"},
     }
     return {
@@ -474,11 +499,12 @@ def _broker_config(
     filesystem = ", ".join(
         (
             '":minimal" = "read"',
-            f'{quote(str(Path.home().resolve()))} = "deny"',
-            f'{quote(str(codex_home.resolve()))} = "deny"',
-            f'{quote(str(vault_root.resolve()))} = "deny"',
-            f'{quote(str(auth_file.parent.resolve()))} = "deny"',
-            f'{quote(str(auth_file.resolve()))} = "deny"',
+            *(
+                f'{quote(str(path))} = "deny"'
+                for path in _denied_paths(
+                    codex_home=codex_home, vault_root=vault_root, auth_file=auth_file
+                )
+            ),
             '":workspace_roots" = { "." = "read" }',
         )
     )
@@ -499,11 +525,27 @@ def _broker_config(
     )
 
 
+def _sandbox_visible_executable(
+    working_directory: Path, *, platform: str | None = None
+) -> Path:
+    bundled = Path(bundled_codex_path())
+    if (platform or sys.platform) != "linux":
+        return bundled
+    # Linux's bwrap re-executes Codex inside the sandbox. A binary installed
+    # under the denied home directory is unavailable there. Copy only the
+    # trusted executable into this owner-only, read-only-to-tools workspace.
+    executable = working_directory / "codex"
+    shutil.copyfile(bundled, executable)
+    executable.chmod(0o500)
+    return executable
+
+
 def _clean_environment_prefix(
     *,
     root: Path,
     codex_home: Path,
     hook_counter: Path,
+    codex_executable: Path,
 ) -> list[str]:
     return [
         "/usr/bin/env",
@@ -513,7 +555,7 @@ def _clean_environment_prefix(
         "PATH=/usr/bin:/bin",
         "LANG=en_US.UTF-8",
         f"PKM_API_HOOK_COUNTER={hook_counter}",
-        str(bundled_codex_path()),
+        str(codex_executable),
     ]
 
 
@@ -534,6 +576,7 @@ def _run_filesystem_denial_probe(
             root=isolated.root,
             codex_home=isolated.codex_home,
             hook_counter=isolated.hook_counter,
+            codex_executable=isolated.codex_executable,
         ),
         "sandbox",
         "--permission-profile",
