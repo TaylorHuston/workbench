@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import datetime as dt
+import sqlite3
 from dataclasses import dataclass, replace
 from pathlib import Path
 
@@ -18,10 +19,12 @@ from pkm_api.application.job_processing import (
     JobLeadLeaseLostError,
     JobLeadProcessor,
     JobProcessingError,
+    MaterializationResult,
     RetrievedJobSource,
 )
 from pkm_api.domain.job_leads import (
     JobLeadOutcome,
+    JobLeadStage,
     JobLeadStatus,
     MaterializationStatus,
 )
@@ -42,8 +45,10 @@ NOW = dt.datetime(2026, 9, 23, 12, 0, tzinfo=dt.UTC)
 class FakeRetriever:
     failure: Exception | None = None
     final_url: str | None = None
+    called: bool = False
 
     def retrieve(self, source_url: str) -> RetrievedJobSource:
+        self.called = True
         if self.failure is not None:
             raise self.failure
         return RetrievedJobSource(
@@ -77,10 +82,39 @@ class FakeCatalog:
 class FakeAssessor:
     assessment: JobPostingAssessment
     called: bool = False
+    cancelled: bool = False
 
     def assess(self, proposal: JobPostingProposal) -> JobPostingAssessment:
         self.called = True
         return self.assessment
+
+    def cancel(self) -> None:
+        self.cancelled = True
+
+
+@dataclass
+class FakeMaterializer:
+    result: MaterializationResult | None = None
+    failure: Exception | None = None
+    called: bool = False
+
+    def materialize(
+        self,
+        posting: object,
+        *,
+        lead: object,
+    ) -> MaterializationResult:
+        self.called = True
+        if self.failure is not None:
+            raise self.failure
+        return self.result or MaterializationResult(
+            status=MaterializationStatus.SUCCEEDED,
+            posting_key="linkedin:4470613618",
+            posting_path=(
+                "02-personal/career/job-market/companies/example-corp/"
+                "platform-engineer-linkedin-4470613618.md"
+            ),
+        )
 
 
 @pytest.fixture
@@ -95,6 +129,7 @@ def proposal() -> JobPostingProposal:
         work_type=WorkType.REMOTE,
         seniority=Seniority.SENIOR,
         skills=("Python", "AWS"),
+        evidence_text="PRIVATE EXTRACTED EVIDENCE",
     )
 
 
@@ -142,6 +177,8 @@ def create_processor(
     assessment: JobPostingAssessment,
     match: CatalogMatch | None = None,
     retriever: FakeRetriever | None = None,
+    materializer: object | None = None,
+    clock: object | None = None,
 ) -> tuple[JobLeadProcessor, FakeAssessor]:
     assessor = FakeAssessor(assessment)
     processor = JobLeadProcessor(
@@ -154,10 +191,27 @@ def create_processor(
             canonical_skills={"Python", "AWS"},
             role_archetypes={"platform-infrastructure-devops"},
         ),
-        materializer=DisabledJobPostingMaterializer(),
-        clock=lambda: NOW + dt.timedelta(minutes=1),
+        materializer=materializer or DisabledJobPostingMaterializer(),
+        clock=clock or (lambda: NOW + dt.timedelta(minutes=1)),
     )
     return processor, assessor
+
+
+def test_processor_forwards_shutdown_cancellation_to_the_assessor(
+    tmp_path: Path,
+    proposal: JobPostingProposal,
+    assessment: JobPostingAssessment,
+) -> None:
+    repository = create_repository(tmp_path)
+    processor, assessor = create_processor(
+        repository,
+        proposal=proposal,
+        assessment=assessment,
+    )
+
+    processor.cancel()
+
+    assert assessor.cancelled is True
 
 
 def test_unique_lead_stops_at_validated_materialization_boundary(
@@ -181,6 +235,156 @@ def test_unique_lead_stops_at_validated_materialization_boundary(
     assert result.outcome.company == "Example Corp"
     assert assessor.called is True
     assert b"PRIVATE RAW SOURCE BODY" not in (tmp_path / "control.sqlite3").read_bytes()
+
+
+def test_materializer_success_completes_with_vault_path(
+    tmp_path: Path,
+    proposal: JobPostingProposal,
+    assessment: JobPostingAssessment,
+) -> None:
+    repository = create_repository(tmp_path)
+    materializer = FakeMaterializer()
+    processor, _ = create_processor(
+        repository,
+        proposal=proposal,
+        assessment=assessment,
+        materializer=materializer,
+    )
+
+    result = processor.process_next(worker_id="worker-1")
+
+    assert result is not None
+    assert result.status is JobLeadStatus.MATERIALIZED
+    assert result.outcome is not None
+    assert result.outcome.materialization_status is MaterializationStatus.SUCCEEDED
+    assert result.outcome.posting_path == (
+        "02-personal/career/job-market/companies/example-corp/"
+        "platform-engineer-linkedin-4470613618.md"
+    )
+    assert materializer.called is True
+    with sqlite3.connect(tmp_path / "control.sqlite3") as connection:
+        candidate = connection.execute(
+            "SELECT materialization_candidate_json FROM job_leads"
+        ).fetchone()[0]
+    assert candidate is None
+
+
+def test_lost_lease_is_fenced_before_any_vault_write(
+    tmp_path: Path,
+    proposal: JobPostingProposal,
+    assessment: JobPostingAssessment,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    repository = create_repository(tmp_path)
+    materializer = FakeMaterializer()
+    original_advance = repository.advance_claim
+
+    def lose_lease_before_materialization(
+        claim: object,
+        *,
+        stage: JobLeadStage,
+        now: dt.datetime,
+        lease_duration: dt.timedelta,
+    ) -> object:
+        if stage is JobLeadStage.MATERIALIZING:
+            raise JobLeadLeaseLostError("lease expired")
+        return original_advance(
+            claim,
+            stage=stage,
+            now=now,
+            lease_duration=lease_duration,
+        )
+
+    monkeypatch.setattr(repository, "advance_claim", lose_lease_before_materialization)
+    processor, _ = create_processor(
+        repository,
+        proposal=proposal,
+        assessment=assessment,
+        materializer=materializer,
+    )
+
+    with pytest.raises(JobLeadLeaseLostError):
+        processor.process_next(worker_id="worker-1")
+
+    assert materializer.called is False
+
+
+def test_retry_resumes_persisted_materialization_without_source_or_model(
+    tmp_path: Path,
+    proposal: JobPostingProposal,
+    assessment: JobPostingAssessment,
+) -> None:
+    repository = create_repository(tmp_path)
+    failing = FakeMaterializer(failure=OSError("simulated filesystem outage"))
+    first_processor, first_assessor = create_processor(
+        repository,
+        proposal=proposal,
+        assessment=assessment,
+        materializer=failing,
+    )
+
+    first = first_processor.process_next(worker_id="worker-1")
+
+    assert first is not None
+    assert first.status is JobLeadStatus.QUEUED
+    assert first.last_error is not None
+    assert first.last_error.code == "unexpectedProcessingFailure"
+    assert first.last_error.retryable is True
+    database_bytes = (tmp_path / "control.sqlite3").read_bytes()
+    assert b"PRIVATE RAW SOURCE BODY" not in database_bytes
+    assert proposal.evidence_text.encode() not in database_bytes
+
+    forbidden_retriever = FakeRetriever(
+        failure=AssertionError("materialization retry must not retrieve the source")
+    )
+    succeeding = FakeMaterializer()
+    second_processor, second_assessor = create_processor(
+        repository,
+        proposal=proposal,
+        assessment=assessment,
+        retriever=forbidden_retriever,
+        materializer=succeeding,
+        clock=lambda: NOW + dt.timedelta(minutes=3),
+    )
+
+    second = second_processor.process_next(worker_id="worker-2")
+
+    assert second is not None
+    assert second.status is JobLeadStatus.MATERIALIZED
+    assert forbidden_retriever.called is False
+    assert first_assessor.called is True
+    assert second_assessor.called is False
+    assert succeeding.called is True
+
+
+def test_possible_repost_at_materialization_finishes_without_write_success(
+    tmp_path: Path,
+    proposal: JobPostingProposal,
+    assessment: JobPostingAssessment,
+) -> None:
+    repository = create_repository(tmp_path)
+    materializer = FakeMaterializer(
+        result=MaterializationResult(
+            status=MaterializationStatus.POSSIBLE_REPOST,
+            posting_key=proposal.posting_key,
+        )
+    )
+    processor, _ = create_processor(
+        repository,
+        proposal=proposal,
+        assessment=assessment,
+        materializer=materializer,
+    )
+
+    result = processor.process_next(worker_id="worker-1")
+
+    assert result is not None
+    assert result.status is JobLeadStatus.POSSIBLE_REPOST
+    assert result.outcome is not None
+    assert result.outcome.kind == "possibleRepost"
+    assert (
+        result.outcome.materialization_status is MaterializationStatus.POSSIBLE_REPOST
+    )
 
 
 def test_exact_and_possible_matches_terminate_without_assessment(

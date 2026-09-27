@@ -18,7 +18,10 @@ from pkm_api.application.job_leads import (
     PreconditionFailedError,
     RetryJobLeadResult,
 )
-from pkm_api.application.job_processing import JobLeadLeaseLostError
+from pkm_api.application.job_processing import (
+    JobLeadLeaseLostError,
+    JobProcessingError,
+)
 from pkm_api.domain.job_leads import (
     JobLead,
     JobLeadClaim,
@@ -29,8 +32,16 @@ from pkm_api.domain.job_leads import (
     JobLeadStatus,
     MaterializationStatus,
 )
+from pkm_api.domain.job_postings import (
+    JobPostingAssessment,
+    JobPostingProposal,
+    SalaryRange,
+    Seniority,
+    ValidatedJobPosting,
+    WorkType,
+)
 
-_SCHEMA_VERSION = 3
+_SCHEMA_VERSION = 4
 
 
 class UnsupportedControlStoreVersionError(RuntimeError):
@@ -75,7 +86,7 @@ class SqliteJobLeadRepository:
                 )
                 """
             )
-            if version < 2:
+            if version < _SCHEMA_VERSION:
                 self._migrate_job_leads(connection)
             self._create_control_tables(connection)
             connection.execute(
@@ -324,8 +335,13 @@ class SqliteJobLeadRepository:
                         status = ? AND (next_attempt_at IS NULL OR next_attempt_at <= ?)
                     ) OR (
                         status = ? AND lease_expires_at <= ?
+                    ) OR (
+                        status = ? AND materialization_candidate_json IS NOT NULL
                     )
-                    ORDER BY created_at ASC, id ASC
+                    ORDER BY
+                        CASE WHEN status = 'readyForMaterialization' THEN 1 ELSE 0 END,
+                        created_at ASC,
+                        id ASC
                     LIMIT 1
                     """,
                     (
@@ -333,6 +349,7 @@ class SqliteJobLeadRepository:
                         now.isoformat(),
                         JobLeadStatus.PROCESSING.value,
                         now.isoformat(),
+                        JobLeadStatus.READY_FOR_MATERIALIZATION.value,
                     ),
                 ).fetchone()
                 if row is None:
@@ -356,6 +373,12 @@ class SqliteJobLeadRepository:
                         self._fail_expired_attempt_budget(connection, current, now)
                         continue
                 break
+            resume_materialization = row["materialization_candidate_json"] is not None
+            claimed_stage = (
+                JobLeadStage.MATERIALIZING
+                if resume_materialization
+                else JobLeadStage.RETRIEVING
+            )
             connection.execute(
                 """
                 UPDATE job_leads
@@ -367,7 +390,7 @@ class SqliteJobLeadRepository:
                 """,
                 (
                     JobLeadStatus.PROCESSING.value,
-                    JobLeadStage.RETRIEVING.value,
+                    claimed_stage.value,
                     now.isoformat(),
                     worker_id,
                     lease_token,
@@ -519,6 +542,82 @@ class SqliteJobLeadRepository:
                 lease_expires_at=lease_expires_at,
             )
 
+    def save_materialization_candidate(
+        self,
+        claim: JobLeadClaim,
+        *,
+        posting: ValidatedJobPosting,
+        now: dt.datetime,
+        lease_duration: dt.timedelta,
+    ) -> JobLeadClaim:
+        lease_expires_at = now + lease_duration
+        candidate = self._materialization_candidate_json(posting)
+        with self._connect() as connection:
+            connection.execute("BEGIN IMMEDIATE")
+            changed = connection.execute(
+                """
+                UPDATE job_leads
+                SET version = version + 1, stage = ?, updated_at = ?,
+                    lease_expires_at = ?, materialization_candidate_json = ?
+                WHERE id = ? AND status = ? AND lease_token = ?
+                    AND lease_expires_at > ?
+                """,
+                (
+                    JobLeadStage.MATERIALIZING.value,
+                    now.isoformat(),
+                    lease_expires_at.isoformat(),
+                    candidate,
+                    claim.job_lead.id,
+                    JobLeadStatus.PROCESSING.value,
+                    claim.lease_token,
+                    now.isoformat(),
+                ),
+            ).rowcount
+            if changed != 1:
+                raise JobLeadLeaseLostError(claim.job_lead.id)
+            lead = self._get(connection, claim.job_lead.id)
+            return JobLeadClaim(
+                job_lead=lead,
+                worker_id=claim.worker_id,
+                lease_token=claim.lease_token,
+                lease_expires_at=lease_expires_at,
+            )
+
+    def load_materialization_candidate(
+        self,
+        claim: JobLeadClaim,
+    ) -> ValidatedJobPosting:
+        with self._connect() as connection:
+            row = connection.execute(
+                """
+                SELECT materialization_candidate_json
+                FROM job_leads
+                WHERE id = ? AND status = ? AND lease_token = ?
+                """,
+                (
+                    claim.job_lead.id,
+                    JobLeadStatus.PROCESSING.value,
+                    claim.lease_token,
+                ),
+            ).fetchone()
+        if row is None:
+            raise JobLeadLeaseLostError(claim.job_lead.id)
+        value = row["materialization_candidate_json"]
+        if value is None:
+            raise JobProcessingError(
+                "materializationCandidateUnavailable",
+                "The validated materialization candidate is unavailable.",
+                retryable=False,
+            )
+        try:
+            return self._materialization_candidate(str(value))
+        except (KeyError, TypeError, ValueError, json.JSONDecodeError) as error:
+            raise JobProcessingError(
+                "materializationCandidateInvalid",
+                "The validated materialization candidate is invalid.",
+                retryable=False,
+            ) from error
+
     def complete_claim(
         self,
         claim: JobLeadClaim,
@@ -537,8 +636,9 @@ class SqliteJobLeadRepository:
                 SET version = version + 1, status = ?, stage = ?,
                     posting_key = COALESCE(?, posting_key), outcome_json = ?,
                     updated_at = ?, lease_owner = NULL, lease_token = NULL,
-                    lease_expires_at = NULL, last_error_code = NULL,
-                    last_error_message = NULL, last_error_retryable = NULL
+                    lease_expires_at = NULL, materialization_candidate_json = NULL,
+                    last_error_code = NULL, last_error_message = NULL,
+                    last_error_retryable = NULL
                 WHERE id = ? AND status = ? AND lease_token = ?
                     AND lease_expires_at > ?
                 """,
@@ -604,6 +704,8 @@ class SqliteJobLeadRepository:
                 SET version = version + 1, status = ?, stage = ?,
                     next_attempt_at = ?, last_error_code = ?,
                     last_error_message = ?, last_error_retryable = ?,
+                    materialization_candidate_json = CASE
+                        WHEN ? THEN materialization_candidate_json ELSE NULL END,
                     updated_at = ?, lease_owner = NULL, lease_token = NULL,
                     lease_expires_at = NULL
                 WHERE id = ? AND status = ? AND lease_token = ?
@@ -616,6 +718,7 @@ class SqliteJobLeadRepository:
                     error.code,
                     error.message,
                     int(error.retryable),
+                    int(will_retry),
                     now.isoformat(),
                     claim.job_lead.id,
                     JobLeadStatus.PROCESSING.value,
@@ -675,7 +778,7 @@ class SqliteJobLeadRepository:
                 next_attempt_at = NULL, last_error_code = 'leaseExpired',
                 last_error_message = ?, last_error_retryable = 1,
                 updated_at = ?, lease_owner = NULL, lease_token = NULL,
-                lease_expires_at = NULL
+                lease_expires_at = NULL, materialization_candidate_json = NULL
             WHERE id = ? AND status = ?
             """,
             (
@@ -785,6 +888,7 @@ class SqliteJobLeadRepository:
             "lease_owner": "TEXT",
             "lease_token": "TEXT",
             "lease_expires_at": "TEXT",
+            "materialization_candidate_json": "TEXT",
         }
         for name, declaration in additions.items():
             if name not in columns:
@@ -820,10 +924,10 @@ class SqliteJobLeadRepository:
                 attempt_count, retry_count, max_attempts, next_attempt_at,
                 last_error_code, last_error_message, last_error_retryable,
                 outcome_json, lease_owner, lease_token, lease_expires_at,
-                created_at, updated_at, expires_at
+                materialization_candidate_json, created_at, updated_at, expires_at
             ) VALUES (
                 ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?,
-                NULL, NULL, NULL, ?, ?, ?
+                NULL, NULL, NULL, NULL, ?, ?, ?
             )
             """,
             (
@@ -965,11 +1069,124 @@ class SqliteJobLeadRepository:
             connection.close()
 
     @staticmethod
+    def _materialization_candidate_json(posting: ValidatedJobPosting) -> str:
+        proposal = posting.proposal
+        assessment = posting.assessment
+        salary = proposal.salary
+        return json.dumps(
+            {
+                "schemaVersion": "materialization-candidate/v1",
+                "proposal": {
+                    "schemaVersion": proposal.schema_version,
+                    "postingKey": proposal.posting_key,
+                    "company": proposal.company,
+                    "role": proposal.role,
+                    "sourceUrl": proposal.source_url,
+                    "location": proposal.location,
+                    "workType": proposal.work_type.value,
+                    "seniority": proposal.seniority.value,
+                    "skills": list(proposal.skills),
+                    "salary": (
+                        {
+                            "minimum": salary.minimum,
+                            "maximum": salary.maximum,
+                            "currency": salary.currency,
+                            "period": salary.period,
+                            "type": salary.type,
+                        }
+                        if salary is not None
+                        else None
+                    ),
+                    "applicationDeadline": proposal.application_deadline,
+                },
+                "assessment": {
+                    "schemaVersion": assessment.schema_version,
+                    "interestLevel": assessment.interest_level,
+                    "roleArchetype": assessment.role_archetype,
+                    "summary": assessment.summary,
+                    "strengths": list(assessment.strengths),
+                    "gaps": list(assessment.gaps),
+                    "confirmedBlocker": assessment.confirmed_blocker,
+                    "unresolvedMaterialConstraint": (
+                        assessment.unresolved_material_constraint
+                    ),
+                    "majorReadinessGap": assessment.major_readiness_gap,
+                    "aspirational": assessment.aspirational,
+                    "networkSignal": assessment.network_signal,
+                },
+                "warnings": list(posting.warnings),
+            },
+            ensure_ascii=True,
+            separators=(",", ":"),
+        )
+
+    @staticmethod
+    def _materialization_candidate(value: str) -> ValidatedJobPosting:
+        data = json.loads(value)
+        if data["schemaVersion"] != "materialization-candidate/v1":
+            raise ValueError("unsupported materialization candidate")
+        proposal = data["proposal"]
+        assessment = data["assessment"]
+        salary_data = proposal.get("salary")
+        salary = (
+            SalaryRange(
+                minimum=int(salary_data["minimum"]),
+                maximum=int(salary_data["maximum"]),
+                currency=str(salary_data["currency"]),
+                period=str(salary_data["period"]),
+                type=str(salary_data["type"]),
+            )
+            if salary_data is not None
+            else None
+        )
+        return ValidatedJobPosting(
+            proposal=JobPostingProposal(
+                schema_version=str(proposal["schemaVersion"]),
+                posting_key=str(proposal["postingKey"]),
+                company=str(proposal["company"]),
+                role=str(proposal["role"]),
+                source_url=str(proposal["sourceUrl"]),
+                location=(
+                    str(proposal["location"])
+                    if proposal.get("location") is not None
+                    else None
+                ),
+                work_type=WorkType(str(proposal["workType"])),
+                seniority=Seniority(str(proposal["seniority"])),
+                skills=tuple(str(item) for item in proposal["skills"]),
+                evidence_text="",
+                salary=salary,
+                application_deadline=(
+                    str(proposal["applicationDeadline"])
+                    if proposal.get("applicationDeadline") is not None
+                    else None
+                ),
+            ),
+            assessment=JobPostingAssessment(
+                schema_version=str(assessment["schemaVersion"]),
+                interest_level=int(assessment["interestLevel"]),
+                role_archetype=str(assessment["roleArchetype"]),
+                summary=str(assessment["summary"]),
+                strengths=tuple(str(item) for item in assessment["strengths"]),
+                gaps=tuple(str(item) for item in assessment["gaps"]),
+                confirmed_blocker=bool(assessment["confirmedBlocker"]),
+                unresolved_material_constraint=bool(
+                    assessment["unresolvedMaterialConstraint"]
+                ),
+                major_readiness_gap=bool(assessment["majorReadinessGap"]),
+                aspirational=bool(assessment["aspirational"]),
+                network_signal=bool(assessment["networkSignal"]),
+            ),
+            warnings=tuple(str(item) for item in data.get("warnings", [])),
+        )
+
+    @staticmethod
     def _outcome_json(outcome: JobLeadOutcome) -> str:
         return json.dumps(
             {
                 "kind": outcome.kind,
                 "postingKey": outcome.posting_key,
+                "postingPath": outcome.posting_path,
                 "company": outcome.company,
                 "role": outcome.role,
                 "warnings": list(outcome.warnings),
@@ -993,6 +1210,7 @@ class SqliteJobLeadRepository:
             outcome = JobLeadOutcome(
                 kind=str(value["kind"]),
                 posting_key=value.get("postingKey"),
+                posting_path=value.get("postingPath"),
                 company=value.get("company"),
                 role=value.get("role"),
                 warnings=tuple(value.get("warnings", [])),

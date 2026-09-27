@@ -62,6 +62,7 @@ archived: true
     app = create_app(
         database_path=tmp_path / "control.sqlite3",
         vault_root=vault,
+        worker_enabled=False,
     )
     with TestClient(app) as test_client:
         yield test_client

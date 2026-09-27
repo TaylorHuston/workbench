@@ -344,6 +344,42 @@ def test_v1_database_is_migrated_without_losing_leads(tmp_path: Path) -> None:
     assert fetched.json()["attemptCount"] == 0
 
 
+def test_v3_ready_lead_without_candidate_is_not_claimed_after_migration(
+    tmp_path: Path,
+) -> None:
+    database_path = tmp_path / "v3.sqlite3"
+    with TestClient(create_app(database_path=database_path)) as client:
+        lead, _ = create_job_lead(client)
+    with sqlite3.connect(database_path) as connection:
+        connection.execute(
+            "UPDATE job_leads SET status = 'readyForMaterialization', "
+            "stage = 'completed' WHERE id = ?",
+            (lead["id"],),
+        )
+        connection.execute(
+            "ALTER TABLE job_leads DROP COLUMN materialization_candidate_json"
+        )
+        connection.execute("PRAGMA user_version = 3")
+
+    repository = SqliteJobLeadRepository(database_path)
+    repository.initialize()
+    claim = repository.claim_next(
+        worker_id="migration-test",
+        now=dt.datetime(2026, 9, 26, tzinfo=dt.UTC),
+        lease_duration=dt.timedelta(minutes=1),
+    )
+
+    assert claim is None
+    with sqlite3.connect(database_path) as connection:
+        row = connection.execute(
+            "SELECT materialization_candidate_json FROM job_leads WHERE id = ?",
+            (lead["id"],),
+        ).fetchone()
+        version = connection.execute("PRAGMA user_version").fetchone()[0]
+    assert row == (None,)
+    assert version == 4
+
+
 def test_operational_and_unexpected_failures_use_sanitized_problem_details(
     client: TestClient,
 ) -> None:
@@ -407,7 +443,7 @@ def test_current_schema_initialization_is_idempotent(tmp_path: Path) -> None:
     repository.initialize()
 
     with sqlite3.connect(database_path) as connection:
-        assert connection.execute("PRAGMA user_version").fetchone()[0] == 3
+        assert connection.execute("PRAGMA user_version").fetchone()[0] == 4
         aliases = connection.execute(
             "SELECT name FROM sqlite_master WHERE name = 'job_lead_source_aliases'"
         ).fetchone()

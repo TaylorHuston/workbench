@@ -6,8 +6,14 @@ import http.client
 import ipaddress
 import socket
 import ssl
+import threading
+import time
 from collections.abc import Callable, Mapping, Sequence
+from contextlib import suppress
 from dataclasses import dataclass
+from functools import partial
+from queue import Empty, Queue
+from typing import TypeVar, cast
 from urllib.parse import urljoin, urlsplit
 
 from pkm_api.application.job_processing import (
@@ -40,6 +46,7 @@ class BoundedHttpResponse:
 Resolver = Callable[[str, int], Sequence[str]]
 Requester = Callable[[ResolvedHttpsTarget, Mapping[str, str]], BoundedHttpResponse]
 Clock = Callable[[], dt.datetime]
+T = TypeVar("T")
 
 
 class SafeHttpJobSourceRetriever:
@@ -54,32 +61,50 @@ class SafeHttpJobSourceRetriever:
         max_redirects: int = 3,
         user_agent: str = "pkm-api-job-source/0.1",
     ) -> None:
+        if timeout_seconds <= 0:
+            raise ValueError("timeout_seconds must be positive")
         self._resolver = resolver or _resolve_addresses
         self._clock = clock or (lambda: dt.datetime.now(dt.UTC))
         self._timeout_seconds = timeout_seconds
         self._max_bytes = max_bytes
         self._max_redirects = max_redirects
         self._user_agent = user_agent
-        self._requester = requester or self._request
+        self._requester = requester
+        self._cancelled = threading.Event()
+        self._connection_lock = threading.Lock()
+        self._active_connection: _PinnedHttpsConnection | None = None
+
+    def cancel(self) -> None:
+        self._cancelled.set()
+        self._close_active_connection()
 
     def retrieve(self, source_url: str) -> RetrievedJobSource:
+        deadline = time.monotonic() + self._timeout_seconds
         current_url = source_url
         for redirect_count in range(self._max_redirects + 1):
-            target = self._resolve_target(current_url)
+            target = self._resolve_target(current_url, deadline=deadline)
+            headers = {
+                "Accept": (
+                    "text/html,application/xhtml+xml,"
+                    "application/json;q=0.9,text/plain;q=0.8"
+                ),
+                "Accept-Encoding": "identity",
+                "Host": _host_header(target.hostname, target.port),
+                "User-Agent": self._user_agent,
+            }
             try:
-                response = self._requester(
-                    target,
-                    {
-                        "Accept": (
-                            "text/html,application/xhtml+xml,application/json;q=0.9,"
-                            "text/plain;q=0.8"
-                        ),
-                        "Accept-Encoding": "identity",
-                        "Host": _host_header(target.hostname, target.port),
-                        "User-Agent": self._user_agent,
-                    },
-                )
+                if self._requester is None:
+                    response = self._request(target, headers, deadline=deadline)
+                else:
+                    response = self._run_bounded(
+                        partial(self._requester, target, headers),
+                        deadline=deadline,
+                        timeout_code="sourceUnavailable",
+                        timeout_message="The job source could not be retrieved.",
+                    )
             except (OSError, TimeoutError, http.client.HTTPException) as error:
+                if self._cancelled.is_set():
+                    self._raise_cancelled()
                 raise JobProcessingError(
                     "sourceUnavailable",
                     "The job source could not be retrieved.",
@@ -140,7 +165,12 @@ class SafeHttpJobSourceRetriever:
 
         raise AssertionError("redirect loop must return or raise")
 
-    def _resolve_target(self, value: str) -> ResolvedHttpsTarget:
+    def _resolve_target(
+        self,
+        value: str,
+        *,
+        deadline: float,
+    ) -> ResolvedHttpsTarget:
         parsed = urlsplit(value)
         if parsed.scheme.lower() != "https":
             self._blocked("Job source URLs must use HTTPS.")
@@ -167,7 +197,13 @@ class SafeHttpJobSourceRetriever:
             self._blocked("The job source hostname is not publicly routable.")
 
         try:
-            addresses = tuple(sorted(set(self._resolver(hostname, port))))
+            resolved = self._run_bounded(
+                lambda: self._resolver(hostname, port),
+                deadline=deadline,
+                timeout_code="sourceDnsFailure",
+                timeout_message="The job source hostname could not be resolved.",
+            )
+            addresses = tuple(sorted(set(resolved)))
         except OSError as error:
             raise JobProcessingError(
                 "sourceDnsFailure",
@@ -207,16 +243,33 @@ class SafeHttpJobSourceRetriever:
         self,
         target: ResolvedHttpsTarget,
         headers: Mapping[str, str],
+        *,
+        deadline: float,
     ) -> BoundedHttpResponse:
+        timeout = self._remaining_seconds(deadline)
         connection = _PinnedHttpsConnection(
             ip_address=target.addresses[0],
             server_hostname=target.hostname,
             port=target.port,
-            timeout=self._timeout_seconds,
+            timeout=timeout,
             context=ssl.create_default_context(),
         )
+        with self._connection_lock:
+            if self._cancelled.is_set():
+                connection.close()
+                self._raise_cancelled()
+            self._active_connection = connection
+        deadline_timer = threading.Timer(
+            self._remaining_seconds(deadline),
+            self._abort_connection,
+            args=(connection,),
+        )
+        deadline_timer.daemon = True
+        deadline_timer.start()
         try:
+            self._apply_connection_timeout(connection, deadline)
             connection.request("GET", target.request_target, headers=dict(headers))
+            self._apply_connection_timeout(connection, deadline)
             response = connection.getresponse()
             content_length = response.getheader("Content-Length")
             if content_length is not None:
@@ -240,7 +293,12 @@ class SafeHttpJobSourceRetriever:
                         "The job source exceeded the response-size limit.",
                         retryable=False,
                     )
-            body = _read_bounded(response, self._max_bytes)
+            body = _read_bounded(
+                response,
+                self._max_bytes,
+                deadline=deadline,
+                cancelled=self._cancelled,
+            )
             response_headers = {
                 key.lower(): value for key, value in response.getheaders()
             }
@@ -250,7 +308,102 @@ class SafeHttpJobSourceRetriever:
                 body=body,
             )
         finally:
+            deadline_timer.cancel()
+            deadline_timer.join(timeout=0.1)
+            with self._connection_lock:
+                if self._active_connection is connection:
+                    self._active_connection = None
             connection.close()
+
+    def _run_bounded(
+        self,
+        operation: Callable[[], T],
+        *,
+        deadline: float,
+        timeout_code: str,
+        timeout_message: str,
+    ) -> T:
+        if self._cancelled.is_set():
+            self._raise_cancelled()
+        results: Queue[tuple[bool, object]] = Queue(maxsize=1)
+
+        def run() -> None:
+            try:
+                if self._cancelled.is_set():
+                    self._raise_cancelled()
+                if time.monotonic() >= deadline:
+                    raise JobProcessingError(
+                        timeout_code,
+                        timeout_message,
+                        retryable=True,
+                    )
+                results.put((True, operation()))
+            except Exception as error:
+                results.put((False, error))
+
+        threading.Thread(
+            target=run,
+            name="pkm-api-source-operation",
+            daemon=True,
+        ).start()
+        while True:
+            if self._cancelled.is_set():
+                self._close_active_connection()
+                self._raise_cancelled()
+            remaining = deadline - time.monotonic()
+            if remaining <= 0:
+                self._close_active_connection()
+                raise JobProcessingError(
+                    timeout_code,
+                    timeout_message,
+                    retryable=True,
+                )
+            try:
+                succeeded, value = results.get(timeout=min(0.01, remaining))
+            except Empty:
+                continue
+            if succeeded:
+                return cast(T, value)
+            raise cast(Exception, value)
+
+    def _apply_connection_timeout(
+        self,
+        connection: _PinnedHttpsConnection,
+        deadline: float,
+    ) -> None:
+        timeout = self._remaining_seconds(deadline)
+        connection.timeout = timeout
+        if connection.sock is not None:
+            connection.sock.settimeout(timeout)
+
+    def _remaining_seconds(self, deadline: float) -> float:
+        if self._cancelled.is_set():
+            self._raise_cancelled()
+        remaining = deadline - time.monotonic()
+        if remaining <= 0:
+            raise TimeoutError("The source retrieval deadline expired.")
+        return remaining
+
+    def _close_active_connection(self) -> None:
+        with self._connection_lock:
+            connection = self._active_connection
+        if connection is not None:
+            self._abort_connection(connection)
+
+    @staticmethod
+    def _abort_connection(connection: _PinnedHttpsConnection) -> None:
+        if connection.sock is not None:
+            with suppress(OSError):
+                connection.sock.shutdown(socket.SHUT_RDWR)
+        connection.close()
+
+    @staticmethod
+    def _raise_cancelled() -> None:
+        raise JobProcessingError(
+            "workerStopping",
+            "Job source retrieval stopped for worker shutdown.",
+            retryable=True,
+        )
 
     @staticmethod
     def _blocked(message: str) -> None:
@@ -305,10 +458,27 @@ def _resolve_addresses(hostname: str, port: int) -> Sequence[str]:
     ]
 
 
-def _read_bounded(response: http.client.HTTPResponse, maximum: int) -> bytes:
+def _read_bounded(
+    response: http.client.HTTPResponse,
+    maximum: int,
+    *,
+    deadline: float | None = None,
+    cancelled: threading.Event | None = None,
+) -> bytes:
     chunks: list[bytes] = []
     total = 0
     while True:
+        if cancelled is not None and cancelled.is_set():
+            raise JobProcessingError(
+                "workerStopping",
+                "Job source retrieval stopped for worker shutdown.",
+                retryable=True,
+            )
+        if deadline is not None:
+            remaining = deadline - time.monotonic()
+            if remaining <= 0:
+                raise TimeoutError("The source retrieval deadline expired.")
+            _set_response_timeout(response, remaining)
         chunk = response.read(min(64 * 1024, maximum + 1 - total))
         if not chunk:
             return b"".join(chunks)
@@ -320,6 +490,14 @@ def _read_bounded(response: http.client.HTTPResponse, maximum: int) -> bytes:
                 retryable=False,
             )
         chunks.append(chunk)
+
+
+def _set_response_timeout(response: http.client.HTTPResponse, timeout: float) -> None:
+    buffered = getattr(response, "fp", None)
+    raw = getattr(buffered, "raw", None)
+    sock = getattr(raw, "_sock", None)
+    if sock is not None:
+        sock.settimeout(timeout)
 
 
 def _host_header(hostname: str, port: int) -> str:
