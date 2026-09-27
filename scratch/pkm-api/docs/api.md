@@ -147,12 +147,20 @@ The operation has no request body.
 | --- | --- | --- |
 | `queued` | No | Eligible at `nextAttemptAt` |
 | `processing` | No | Held by an internal fenced lease |
-| `readyForMaterialization` | Yes | Validated; materialization disabled |
+| `readyForMaterialization` | Yes | Validated candidate retained by an older or deliberately disabled materializer; candidates with persisted render data are resumable |
 | `alreadyTracked` | Yes | Exact authoritative identity exists |
 | `possibleRepost` | Yes | Company/title match lacks identity proof |
 | `skipped` | Yes | Unsupported or intentionally out of scope |
-| `materialized` | Yes | Reserved for a future write-enabled release |
+| `materialized` | Yes | Authoritative Company/JobPosting Markdown exists; `outcome.postingPath` identifies the posting |
 | `failed` | Yes | Permanent failure or retry budget exhausted |
+
+## Automatic worker semantics
+
+When the API has a configured vault, startup verifies refreshable ChatGPT authentication, passes the live adversarial tool/filesystem-isolation check, and starts one in-process queue consumer. Startup also drains eligible durable work left by an earlier process. A successful `POST /v1/job-leads` or manual retry signals that consumer immediately after the SQLite transaction commits; the HTTP response remains asynchronous and does not wait for retrieval or assessment.
+
+The consumer claims eligible leads through fenced SQLite leases and polls for delayed automatic retries while idle. Transient processor/lease exceptions trigger bounded backoff and another drain attempt; `/readyz` returns `503` while the enabled consumer is degraded, failed, or stopping. Shutdown cancels an active isolated assessor and preserves recoverability through the fenced claim. After validation, the worker persists an evidence-minimized candidate, rechecks identity, and creates or reconciles confined Company/JobPosting Markdown. A write retry resumes from that candidate without another source request or model assessment. `pkm-api-worker` remains a recovery/diagnostic command and should run only while the API is stopped.
+
+Assessment infrastructure failures use safe internal codes such as `assessmentUnavailable`. Invalid structured output uses `invalidAssessment`. Any attempted model tool call uses non-retryable `assessmentToolAttempt`. These codes may appear in a JobLead's `lastError`, but prompts, source bodies, extracted evidence, candidate context, raw model responses, tool payloads, credentials, and exception text never do. A bounded validated assessment projection is temporarily retained for write recovery and rendered into the private JobPosting.
 
 ## Error shape
 

@@ -1,6 +1,6 @@
 [project]
 name = "pkm-api"
-version = "0.2.0"
+version = "0.5.0"
 description = "Composable REST API spike for controlled PKM and vault workflows"
 readme = "README.md"
 requires-python = ">=3.12"
@@ -21,6 +21,7 @@ dev = [
 [project.scripts]
 pkm-api = "pkm_api.__main__:main"
 pkm-api-codex-auth-check = "pkm_api.codex_auth_check:main"
+pkm-api-worker = "pkm_api.worker_cli:main"
 
 [build-system]
 requires = ["hatchling"]

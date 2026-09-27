@@ -38,6 +38,8 @@ class MaterializationStatus(StrEnum):
     NOT_READY = "notReady"
     DISABLED = "disabled"
     SUCCEEDED = "succeeded"
+    ALREADY_TRACKED = "alreadyTracked"
+    POSSIBLE_REPOST = "possibleRepost"
 
 
 TERMINAL_JOB_LEAD_STATUSES = frozenset(
@@ -63,6 +65,7 @@ class JobLeadError:
 class JobLeadOutcome:
     kind: str
     posting_key: str | None = None
+    posting_path: str | None = None
     company: str | None = None
     role: str | None = None
     warnings: tuple[str, ...] = ()

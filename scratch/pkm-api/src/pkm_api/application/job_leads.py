@@ -145,12 +145,14 @@ class JobLeadService:
         ttl: dt.timedelta = dt.timedelta(days=30),
         idempotency_ttl: dt.timedelta = dt.timedelta(days=7),
         max_attempts: int = 3,
+        on_work_available: Callable[[], None] | None = None,
     ) -> None:
         self._repository = repository
         self._clock = clock or (lambda: dt.datetime.now(dt.UTC))
         self._ttl = ttl
         self._idempotency_ttl = idempotency_ttl
         self._max_attempts = max_attempts
+        self._on_work_available = on_work_available or (lambda: None)
 
     def initialize(self) -> None:
         self._repository.initialize()
@@ -204,13 +206,16 @@ class JobLeadService:
                 "sourceReference": source_reference,
             }
         )
-        return self._repository.create_or_get(
+        result = self._repository.create_or_get(
             lead,
             operation="createJobLead",
             idempotency_key=command.idempotency_key,
             request_digest=digest,
             idempotency_expires_at=now + self._idempotency_ttl,
         )
+        if result.job_lead.status is JobLeadStatus.QUEUED:
+            self._on_work_available()
+        return result
 
     def get(self, job_lead_id: str) -> JobLead:
         return self._repository.get(job_lead_id)
@@ -247,7 +252,7 @@ class JobLeadService:
         digest = semantic_request_digest(
             {"jobLeadId": job_lead_id, "expectedVersion": expected_version}
         )
-        return self._repository.retry(
+        result = self._repository.retry(
             job_lead_id,
             expected_version=expected_version,
             operation="retryJobLead",
@@ -256,6 +261,9 @@ class JobLeadService:
             idempotency_expires_at=now + self._idempotency_ttl,
             now=now,
         )
+        if result.job_lead.status is JobLeadStatus.QUEUED:
+            self._on_work_available()
+        return result
 
 
 def canonicalize_job_url(value: str) -> CanonicalJobUrl:

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import datetime as dt
+import threading
 from collections.abc import Callable, Collection
 from dataclasses import dataclass, replace
 from typing import Protocol
@@ -57,6 +58,7 @@ class RetrievedJobSource:
 class MaterializationResult:
     status: MaterializationStatus
     posting_key: str | None = None
+    posting_path: str | None = None
 
 
 class JobSourceRetriever(Protocol):
@@ -86,7 +88,12 @@ class JobPostingProposalValidator(Protocol):
 
 
 class JobPostingMaterializer(Protocol):
-    def materialize(self, posting: ValidatedJobPosting) -> MaterializationResult: ...
+    def materialize(
+        self,
+        posting: ValidatedJobPosting,
+        *,
+        lead: JobLead,
+    ) -> MaterializationResult: ...
 
 
 class JobLeadWorkRepository(Protocol):
@@ -118,6 +125,20 @@ class JobLeadWorkRepository(Protocol):
         lease_duration: dt.timedelta,
     ) -> JobLeadClaim: ...
 
+    def save_materialization_candidate(
+        self,
+        claim: JobLeadClaim,
+        *,
+        posting: ValidatedJobPosting,
+        now: dt.datetime,
+        lease_duration: dt.timedelta,
+    ) -> JobLeadClaim: ...
+
+    def load_materialization_candidate(
+        self,
+        claim: JobLeadClaim,
+    ) -> ValidatedJobPosting: ...
+
     def complete_claim(
         self,
         claim: JobLeadClaim,
@@ -137,7 +158,12 @@ class JobLeadWorkRepository(Protocol):
 
 
 class DisabledJobPostingMaterializer:
-    def materialize(self, posting: ValidatedJobPosting) -> MaterializationResult:
+    def materialize(
+        self,
+        posting: ValidatedJobPosting,
+        *,
+        lead: JobLead,
+    ) -> MaterializationResult:
         return MaterializationResult(
             status=MaterializationStatus.DISABLED,
             posting_key=posting.proposal.posting_key,
@@ -252,6 +278,14 @@ class JobLeadProcessor:
         self._materializer = materializer
         self._clock = clock or (lambda: dt.datetime.now(dt.UTC))
         self._lease_duration = lease_duration
+        self._cancelled = threading.Event()
+
+    def cancel(self) -> None:
+        self._cancelled.set()
+        for dependency in (self._retriever, self._assessor):
+            cancel = getattr(dependency, "cancel", None)
+            if callable(cancel):
+                cancel()
 
     def process_next(self, *, worker_id: str) -> JobLead | None:
         claim = self._repository.claim_next(
@@ -262,9 +296,15 @@ class JobLeadProcessor:
         if claim is None:
             return None
         try:
+            self._raise_if_cancelled()
+            if claim.job_lead.stage is JobLeadStage.MATERIALIZING:
+                validated = self._repository.load_materialization_candidate(claim)
+                return self._materialize(claim, validated)
             source = self._retriever.retrieve(claim.job_lead.source_url)
+            self._raise_if_cancelled()
             claim = self._advance(claim, JobLeadStage.EXTRACTING)
             proposal = self._extractor.extract(source, claim.job_lead)
+            self._raise_if_cancelled()
             canonical_source = canonicalize_job_url(source.final_url)
             resolved_posting_key = (
                 canonical_source.posting_key or canonical_source.source_key
@@ -296,6 +336,7 @@ class JobLeadProcessor:
                 )
             claim = self._advance(claim, JobLeadStage.DEDUPLICATING)
             match = self._catalog.find_match(proposal)
+            self._raise_if_cancelled()
             if match.kind is CatalogMatchKind.EXACT:
                 return self._complete_match(
                     claim,
@@ -316,28 +357,16 @@ class JobLeadProcessor:
 
             claim = self._advance(claim, JobLeadStage.ASSESSING)
             assessment = self._assessor.assess(proposal)
+            self._raise_if_cancelled()
             claim = self._advance(claim, JobLeadStage.VALIDATING)
             validated = self._validator.validate(proposal, assessment)
-            claim = self._advance(claim, JobLeadStage.MATERIALIZING)
-            materialization = self._materializer.materialize(validated)
-            final_status = (
-                JobLeadStatus.MATERIALIZED
-                if materialization.status is MaterializationStatus.SUCCEEDED
-                else JobLeadStatus.READY_FOR_MATERIALIZATION
-            )
-            return self._repository.complete_claim(
+            claim = self._repository.save_materialization_candidate(
                 claim,
-                status=final_status,
-                outcome=JobLeadOutcome(
-                    kind=final_status.value,
-                    posting_key=materialization.posting_key or proposal.posting_key,
-                    company=proposal.company,
-                    role=proposal.role,
-                    warnings=validated.warnings,
-                    materialization_status=materialization.status,
-                ),
+                posting=validated,
                 now=self._clock(),
+                lease_duration=self._lease_duration,
             )
+            return self._materialize(claim, validated)
         except JobLeadLeaseLostError:
             raise
         except SkipJobLead as error:
@@ -369,6 +398,53 @@ class JobLeadProcessor:
                     retryable=True,
                 ),
                 now=self._clock(),
+            )
+
+    def _materialize(
+        self,
+        claim: JobLeadClaim,
+        validated: ValidatedJobPosting,
+    ) -> JobLead:
+        claim = self._advance(claim, JobLeadStage.MATERIALIZING)
+        materialization = self._materializer.materialize(
+            validated,
+            lead=claim.job_lead,
+        )
+        status_by_result = {
+            MaterializationStatus.SUCCEEDED: JobLeadStatus.MATERIALIZED,
+            MaterializationStatus.ALREADY_TRACKED: JobLeadStatus.ALREADY_TRACKED,
+            MaterializationStatus.POSSIBLE_REPOST: JobLeadStatus.POSSIBLE_REPOST,
+            MaterializationStatus.DISABLED: JobLeadStatus.READY_FOR_MATERIALIZATION,
+        }
+        final_status = status_by_result.get(
+            materialization.status,
+            JobLeadStatus.READY_FOR_MATERIALIZATION,
+        )
+        proposal = validated.proposal
+        warnings = list(validated.warnings)
+        if materialization.status is MaterializationStatus.POSSIBLE_REPOST:
+            warnings.append("Potential repost appeared at the write boundary.")
+        return self._repository.complete_claim(
+            claim,
+            status=final_status,
+            outcome=JobLeadOutcome(
+                kind=final_status.value,
+                posting_key=materialization.posting_key or proposal.posting_key,
+                posting_path=materialization.posting_path,
+                company=proposal.company,
+                role=proposal.role,
+                warnings=tuple(warnings),
+                materialization_status=materialization.status,
+            ),
+            now=self._clock(),
+        )
+
+    def _raise_if_cancelled(self) -> None:
+        if self._cancelled.is_set():
+            raise JobProcessingError(
+                "workerStopping",
+                "JobLead processing stopped for worker shutdown.",
+                retryable=True,
             )
 
     def _advance(self, claim: JobLeadClaim, stage: JobLeadStage) -> JobLeadClaim:

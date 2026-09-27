@@ -1,0 +1,12 @@
+# GB10 / Ubuntu 24.04: allow bubblewrap to create unprivileged user namespaces.
+# This is executable-wide for /usr/bin/bwrap, not pkm-api-specific.
+# An already-confined caller may retain its own profile/exec-transition rules.
+# Keep Ubuntu's global user-namespace restriction enabled. Do not install
+# until the host owner approves this executable-wide exception.
+# The PKM API's Codex probe must still pass before starting the worker.
+abi <abi/4.0>,
+include <tunables/global>
+
+profile pkm-api-bwrap /usr/bin/bwrap flags=(unconfined) {
+  userns,
+}

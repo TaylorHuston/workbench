@@ -84,6 +84,7 @@ class JobLeadErrorResponse(ApiModel):
 class JobLeadOutcomeResponse(ApiModel):
     kind: str
     posting_key: str | None = Field(alias="postingKey")
+    posting_path: str | None = Field(alias="postingPath")
     company: str | None
     role: str | None
     warnings: list[str]
@@ -94,6 +95,7 @@ class JobLeadOutcomeResponse(ApiModel):
         return cls(
             kind=value.kind,
             posting_key=value.posting_key,
+            posting_path=value.posting_path,
             company=value.company,
             role=value.role,
             warnings=list(value.warnings),
