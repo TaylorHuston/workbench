@@ -10,7 +10,6 @@ import {
   UndoRedo,
   codeBlockPlugin,
   codeMirrorPlugin,
-  frontmatterPlugin,
   headingsPlugin,
   jsxPlugin,
   linkDialogPlugin,
@@ -23,7 +22,12 @@ import {
   toolbarPlugin,
 } from '@mdxeditor/editor'
 import '@mdxeditor/editor/style.css'
-import { useState } from 'react'
+import { useRef, useState } from 'react'
+import { FrontmatterPanel } from './FrontmatterPanel'
+import {
+  joinMarkdownFrontmatter,
+  splitMarkdownFrontmatter,
+} from './markdownFrontmatter'
 import type { EditorAdapterProps } from './types'
 
 const plugins = [
@@ -34,7 +38,6 @@ const plugins = [
   linkPlugin(),
   linkDialogPlugin(),
   tablePlugin(),
-  frontmatterPlugin(),
   codeBlockPlugin({ defaultCodeBlockLanguage: 'text' }),
   codeMirrorPlugin({
     codeBlockLanguages: {
@@ -82,17 +85,31 @@ export default function MdxEditor({
   initialValue,
   onChange,
 }: EditorAdapterProps) {
+  const initialDocument = splitMarkdownFrontmatter(initialValue)
   const [error, setError] = useState<string | null>(null)
+  const [frontmatter, setFrontmatter] = useState(initialDocument.yaml)
+  const bodyMarkdownRef = useRef(initialDocument.body)
 
   return (
     <div className="adapter-host rich-editor mdxeditor-host">
       {error ? <div className="adapter-error">Parser note: {error}</div> : null}
+      {frontmatter !== null ? (
+        <FrontmatterPanel
+          id="mdxeditor-frontmatter"
+          value={frontmatter}
+          onChange={(yaml) => {
+            setFrontmatter(yaml)
+            onChange(joinMarkdownFrontmatter(yaml, bodyMarkdownRef.current))
+          }}
+        />
+      ) : null}
       <MDXEditor
-        markdown={initialValue}
+        markdown={initialDocument.body}
         plugins={plugins}
         onChange={(markdown) => {
           setError(null)
-          onChange(markdown)
+          bodyMarkdownRef.current = markdown
+          onChange(joinMarkdownFrontmatter(frontmatter, markdown))
         }}
         onError={({ error: message }) => setError(message)}
         contentEditableClassName="mdxeditor-content"

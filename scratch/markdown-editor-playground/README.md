@@ -44,6 +44,10 @@ npm run build
 - Only CodeMirror is expected to preserve arbitrary Markdown byte-for-byte.
 - The CodeMirror adapter includes small compatibility layers for the current alpha of `codemirror-live-markdown`: list previews insert bullets, task boxes, and ordered markers; grouped inline preview reveals both delimiters when the cursor is inside formatted content; blockquote decoration adds the visual structure missing from the package default.
 - CodeMirror fenced blocks use the package's `codeBlockField` and Lowlight integration for highlighted preview, source-on-focus behavior, and copying.
+- The Tiptap adapter adds a custom Markdown frontmatter node plus Tiptap's task-list, table, and Lowlight code-block extensions. That compatibility work counts toward its implementation-complexity score. Table support and the limited JavaScript/TypeScript highlighter raise its lazy chunk to roughly 206 kB minified (69 kB gzip).
+- The Milkdown adapter enables Crepe's opt-in top bar so the current block can switch between paragraph and heading levels and exposes its formatting, list, insert, and block actions. A small guard prevents those actions from replacing the custom Properties node.
+- The Milkdown adapter adds `remark-frontmatter` and a matching custom ProseMirror node so YAML properties remain one editable block and serialize as frontmatter. This also counts as compatibility work rather than native Crepe behavior.
+- The BlockNote and MDXEditor adapters keep YAML in a shared raw Properties panel, pass only the body into their structured editors, and rejoin both parts on export. This prevents BlockNote from misparsing frontmatter and avoids MDXEditor's scalar property dialog flattening YAML arrays such as `tags`.
 - Tiptap, Milkdown, Lexical, BlockNote, and MDXEditor edit structured document models and may normalize or discard unsupported syntax during serialization.
 - BlockNote's Markdown conversion is explicitly lossy.
 - MDXEditor carries its own Lexical dependency; its adapter remains isolated from the standalone Lexical comparison.
