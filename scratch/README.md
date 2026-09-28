@@ -6,6 +6,7 @@ In-progress experiments, technical spikes, proofs of concept, and disposable cod
 
 - [`ollama-agent-manager/`](ollama-agent-manager/) — local multi-agent management experiment
 - [`ollama-chat/`](ollama-chat/) — local model and agent experimentation
+- [`markdown-editor-playground/`](markdown-editor-playground/) — live Markdown and MDX editor comparison
 - [`pkm-api/`](pkm-api/) — composable REST API spike for controlled PKM workflows
 - [`terraform-test/`](terraform-test/) — small Terraform practice configurations
 

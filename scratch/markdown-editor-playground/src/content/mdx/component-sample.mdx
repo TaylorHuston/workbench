@@ -1,0 +1,21 @@
+export const Accent = ({ children }) => (
+  <span style={{ color: '#a23f32', fontWeight: 700 }}>{children}</span>
+)
+
+# MDX specimen
+
+Ordinary Markdown still works, while <Accent>this phrase is rendered by JSX</Accent>.
+
+<aside data-kind="observation">
+  Embedded components are the reason MDXEditor belongs in the comparison.
+</aside>
+
+## Questions
+
+- Does the editor render the component or preserve it as source?
+- What comes back after a no-op round trip?
+- Can the document return to plain Markdown tooling safely?
+
+```jsx
+<Metric label="round trip" value="inspect" />
+```
