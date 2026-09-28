@@ -1,0 +1,13 @@
+diff --git a/node_modules/@openworkflowspec/diagram-editor/dist/index.js b/node_modules/@openworkflowspec/diagram-editor/dist/index.js
+--- a/node_modules/@openworkflowspec/diagram-editor/dist/index.js
++++ b/node_modules/@openworkflowspec/diagram-editor/dist/index.js
+@@ -72981,7 +72981,7 @@
+ 			elementsSelectable: !0,
+ 			panOnScroll: !0,
+-			panOnDrag: !1,
++			panOnDrag: u,
+ 			zoomOnScroll: !1,
+ 			preventScrolling: !0,
+-			selectionOnDrag: !0,
++			selectionOnDrag: !u,
+ 			fitView: !0,
