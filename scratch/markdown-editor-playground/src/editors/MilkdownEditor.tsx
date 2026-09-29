@@ -2,6 +2,11 @@ import { Crepe } from '@milkdown/crepe'
 import '@milkdown/crepe/theme/common/style.css'
 import '@milkdown/crepe/theme/frame.css'
 import { useEffect, useRef } from 'react'
+import {
+  renderWikilinksForEditor,
+  restoreWikilinksFromEditor,
+  useWikilinkNavigation,
+} from './markdownWikilinks'
 import { milkdownFrontmatter } from './milkdownFrontmatter'
 import { milkdownTopBarConfig } from './milkdownTopBar'
 import type { EditorAdapterProps } from './types'
@@ -51,6 +56,7 @@ export default function MilkdownEditor({
 }: EditorAdapterProps) {
   const hostRef = useRef<HTMLDivElement>(null)
   const onChangeRef = useRef(onChange)
+  useWikilinkNavigation(hostRef)
 
   useEffect(() => {
     onChangeRef.current = onChange
@@ -69,7 +75,7 @@ export default function MilkdownEditor({
 
     const crepe = new Crepe({
       root: host,
-      defaultValue: initialValue,
+      defaultValue: renderWikilinksForEditor(initialValue),
       features: {
         [Crepe.Feature.TopBar]: true,
       },
@@ -83,7 +89,7 @@ export default function MilkdownEditor({
     crepe.on((listener) => {
       listener.markdownUpdated((_context, markdown, previousMarkdown) => {
         if (markdown !== previousMarkdown) {
-          onChangeRef.current(markdown)
+          onChangeRef.current(restoreWikilinksFromEditor(markdown))
         }
       })
     })
@@ -94,7 +100,9 @@ export default function MilkdownEditor({
         void crepe.destroy()
       } else {
         labelCrepeControls(host)
-        onChangeRef.current(crepe.getMarkdown())
+        onChangeRef.current(
+          restoreWikilinksFromEditor(crepe.getMarkdown()),
+        )
       }
     })
 
@@ -105,5 +113,10 @@ export default function MilkdownEditor({
     }
   }, [initialValue])
 
-  return <div className="adapter-host rich-editor milkdown-host" ref={hostRef} />
+  return (
+    <div
+      className="adapter-host rich-editor milkdown-host"
+      ref={hostRef}
+    />
+  )
 }

@@ -517,6 +517,23 @@
   border-left: 3px solid var(--accent);
 }
 
+.rich-editor a[href^='#wikilink='] {
+  padding: 0.04em 0.16em;
+  color: var(--accent);
+  border-bottom: 1px dashed currentColor;
+  background: var(--accent-soft);
+  border-radius: 2px;
+  text-decoration: none;
+  cursor: pointer;
+}
+
+.rich-editor a[href^='#wikilink=']:hover,
+.rich-editor a[href^='#wikilink=']:focus-visible {
+  color: var(--paper);
+  background: var(--accent);
+  outline: none;
+}
+
 .editor-inline-code,
 .tiptap-host code,
 .mdxeditor-content code {
@@ -635,6 +652,22 @@
   margin-bottom: 0;
 }
 
+.mdx-html-comment {
+  display: inline-flex;
+  align-items: center;
+  min-height: 24px;
+  padding: 3px 8px;
+  color: var(--muted);
+  border: 1px dashed var(--rule-strong);
+  border-radius: 3px;
+  background: var(--paper-deep);
+  font-family: var(--mono-font);
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: 0.05em;
+  text-transform: uppercase;
+}
+
 .lexical-editor-frame {
   position: relative;
 }
@@ -653,6 +686,24 @@
   min-height: 100%;
   color: var(--ink);
   background: var(--paper);
+}
+
+.milkdown-host .milkdown .milkdown-top-bar {
+  flex-wrap: nowrap;
+  overflow-x: auto;
+  overscroll-behavior-inline: contain;
+  scrollbar-width: thin;
+}
+
+.milkdown-host .milkdown .milkdown-top-bar:has(.top-bar-heading-dropdown) {
+  overflow-x: visible;
+}
+
+.milkdown-host .milkdown .milkdown-top-bar .top-bar-inner {
+  flex: 0 0 max-content;
+  flex-wrap: nowrap;
+  width: max-content;
+  min-width: 100%;
 }
 
 .milkdown-host .milkdown-frontmatter {
@@ -760,11 +811,29 @@
 }
 
 .mdxeditor-host [class*='_toolbarRoot_'] {
+  position: static;
+  display: flex;
+  flex-direction: column;
+  gap: 0;
+  align-items: stretch;
+  padding: 0;
+  overflow: visible;
+  border-radius: 0;
+  background: transparent;
+}
+
+.mdx-toolbar-controls {
   position: sticky;
   z-index: 3;
   top: 0;
+  display: flex;
+  flex-direction: row;
+  gap: var(--spacing-1);
+  align-items: center;
+  width: 100%;
+  padding: var(--spacing-1_5);
+  overflow-x: auto;
   border-bottom: 1px solid var(--rule);
-  border-radius: 0;
   background: rgba(251, 252, 250, 0.96);
   backdrop-filter: blur(8px);
 }

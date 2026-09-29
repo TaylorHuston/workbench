@@ -17,7 +17,12 @@ import { OnChangePlugin } from '@lexical/react/LexicalOnChangePlugin'
 import { RichTextPlugin } from '@lexical/react/LexicalRichTextPlugin'
 import { HeadingNode, QuoteNode } from '@lexical/rich-text'
 import type { EditorState } from 'lexical'
-import { useEffect } from 'react'
+import { useEffect, useRef } from 'react'
+import {
+  renderWikilinksForEditor,
+  restoreWikilinksFromEditor,
+  useWikilinkNavigation,
+} from './markdownWikilinks'
 import type { EditorAdapterProps } from './types'
 
 function InitialMarkdownReporter({ onChange }: Pick<EditorAdapterProps, 'onChange'>) {
@@ -25,7 +30,9 @@ function InitialMarkdownReporter({ onChange }: Pick<EditorAdapterProps, 'onChang
 
   useEffect(() => {
     editor.getEditorState().read(() => {
-      onChange($convertToMarkdownString(TRANSFORMERS))
+      onChange(
+        restoreWikilinksFromEditor($convertToMarkdownString(TRANSFORMERS)),
+      )
     })
   }, [editor, onChange])
 
@@ -36,14 +43,22 @@ export default function LexicalEditor({
   initialValue,
   onChange,
 }: EditorAdapterProps) {
+  const hostRef = useRef<HTMLDivElement>(null)
+  useWikilinkNavigation(hostRef)
+
   const handleChange = (editorState: EditorState) => {
     editorState.read(() => {
-      onChange($convertToMarkdownString(TRANSFORMERS))
+      onChange(
+        restoreWikilinksFromEditor($convertToMarkdownString(TRANSFORMERS)),
+      )
     })
   }
 
   return (
-    <div className="adapter-host rich-editor lexical-host">
+    <div
+      className="adapter-host rich-editor lexical-host"
+      ref={hostRef}
+    >
       <LexicalComposer
         initialConfig={{
           namespace: 'markdown-editor-playground',
@@ -52,7 +67,10 @@ export default function LexicalEditor({
             throw error
           },
           editorState: () => {
-            $convertFromMarkdownString(initialValue, TRANSFORMERS)
+            $convertFromMarkdownString(
+              renderWikilinksForEditor(initialValue),
+              TRANSFORMERS,
+            )
           },
           theme: {
             heading: {

@@ -8,6 +8,11 @@ import {
   joinMarkdownFrontmatter,
   splitMarkdownFrontmatter,
 } from './markdownFrontmatter'
+import {
+  renderWikilinksForEditor,
+  restoreWikilinksFromEditor,
+  useWikilinkNavigation,
+} from './markdownWikilinks'
 import type { EditorAdapterProps } from './types'
 
 export default function BlockNoteEditor({
@@ -15,6 +20,9 @@ export default function BlockNoteEditor({
   onChange,
 }: EditorAdapterProps) {
   const editor = useCreateBlockNote()
+  const hostRef = useRef<HTMLDivElement>(null)
+  useWikilinkNavigation(hostRef)
+
   const initialDocument = splitMarkdownFrontmatter(initialValue)
   const [frontmatter, setFrontmatter] = useState(initialDocument.yaml)
   const bodyMarkdownRef = useRef(initialDocument.body)
@@ -23,15 +31,22 @@ export default function BlockNoteEditor({
   useEffect(() => {
     const document = splitMarkdownFrontmatter(initialValue)
     isLoadingRef.current = true
-    const blocks = editor.tryParseMarkdownToBlocks(document.body)
+    const blocks = editor.tryParseMarkdownToBlocks(
+      renderWikilinksForEditor(document.body),
+    )
     editor.replaceBlocks(editor.document, blocks)
-    bodyMarkdownRef.current = editor.blocksToMarkdownLossy()
+    bodyMarkdownRef.current = restoreWikilinksFromEditor(
+      editor.blocksToMarkdownLossy(),
+    )
     isLoadingRef.current = false
     onChange(joinMarkdownFrontmatter(document.yaml, bodyMarkdownRef.current))
   }, [editor, initialValue, onChange])
 
   return (
-    <div className="adapter-host rich-editor blocknote-host">
+    <div
+      className="adapter-host rich-editor blocknote-host"
+      ref={hostRef}
+    >
       {frontmatter !== null ? (
         <FrontmatterPanel
           id="blocknote-frontmatter"
@@ -47,7 +62,9 @@ export default function BlockNoteEditor({
         theme="light"
         onChange={() => {
           if (!isLoadingRef.current) {
-            bodyMarkdownRef.current = editor.blocksToMarkdownLossy()
+            bodyMarkdownRef.current = restoreWikilinksFromEditor(
+              editor.blocksToMarkdownLossy(),
+            )
             onChange(
               joinMarkdownFrontmatter(frontmatter, bodyMarkdownRef.current),
             )

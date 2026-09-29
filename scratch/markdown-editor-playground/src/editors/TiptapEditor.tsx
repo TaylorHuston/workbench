@@ -4,6 +4,11 @@ import { Markdown } from '@tiptap/markdown'
 import { EditorContent, useEditor, useEditorState } from '@tiptap/react'
 import StarterKit from '@tiptap/starter-kit'
 import { useEffect, useRef } from 'react'
+import {
+  renderWikilinksForEditor,
+  restoreWikilinksFromEditor,
+  useWikilinkNavigation,
+} from './markdownWikilinks'
 import { TiptapCodeBlock } from './tiptapCodeBlock'
 import { TiptapFrontmatter } from './tiptapFrontmatter'
 import type { EditorAdapterProps } from './types'
@@ -12,7 +17,10 @@ export default function TiptapEditor({
   initialValue,
   onChange,
 }: EditorAdapterProps) {
+  const hostRef = useRef<HTMLDivElement>(null)
   const onChangeRef = useRef(onChange)
+  useWikilinkNavigation(hostRef)
+
   const editor = useEditor({
     extensions: [
       StarterKit.configure({ codeBlock: false }),
@@ -23,7 +31,7 @@ export default function TiptapEditor({
       TiptapFrontmatter,
       Markdown,
     ],
-    content: initialValue,
+    content: renderWikilinksForEditor(initialValue),
     contentType: 'markdown',
     editorProps: {
       attributes: {
@@ -33,7 +41,9 @@ export default function TiptapEditor({
       },
     },
     onUpdate: ({ editor: activeEditor }) => {
-      onChangeRef.current(activeEditor.getMarkdown())
+      onChangeRef.current(
+        restoreWikilinksFromEditor(activeEditor.getMarkdown()),
+      )
     },
   })
 
@@ -53,7 +63,9 @@ export default function TiptapEditor({
   }, [onChange])
 
   useEffect(() => {
-    if (editor) onChangeRef.current(editor.getMarkdown())
+    if (editor) {
+      onChangeRef.current(restoreWikilinksFromEditor(editor.getMarkdown()))
+    }
   }, [editor])
 
   if (!editor) {
@@ -61,7 +73,10 @@ export default function TiptapEditor({
   }
 
   return (
-    <div className="adapter-host rich-editor tiptap-host">
+    <div
+      className="adapter-host rich-editor tiptap-host"
+      ref={hostRef}
+    >
       <div
         className="native-toolbar"
         role="toolbar"
