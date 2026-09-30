@@ -8,6 +8,7 @@ IMPORTANT: As the content in here is meant for learning it should all be coded b
 
 - [`books/`](books/) — book exercises and companion work
 - [`courses/`](courses/) — structured course material
+- [`practice/`](practice/) - original projects intended to practice some concept
 - [`tutorials/`](tutorials/) — documentation and web tutorial projects
 - [`youtube/`](youtube/) — tutorial projects grouped by creator or channel
 

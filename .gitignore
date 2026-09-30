@@ -7,3 +7,5 @@ __pycache__/
 
 # Generated experiment outputs
 scratch/ollama-chat/test-results/
+
+.vscode/
