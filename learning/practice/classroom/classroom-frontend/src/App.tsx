@@ -23,8 +23,10 @@ import { useNotificationProvider } from "./components/refine-ui/notification/use
 import { Toaster } from "./components/refine-ui/notification/toaster";
 import { ThemeProvider } from "./components/refine-ui/theme/theme-provider";
 import Dashboard from "./pages/dashboard";
+import SubjectsList from "./pages/subjects/list";
+import SubjectsCreate from "./pages/subjects/create";
 import "./App.css";
-import { Home } from "lucide-react";
+import { Book, Home } from "lucide-react";
 
 function App() {
   return (
@@ -50,14 +52,24 @@ function App() {
                     icon: <Home />,
                   },
                 },
+                {
+                  name: "subjects",
+                  list: "/subjects",
+                  meta: {
+                    label: "Subjects",
+                    icon: <Book />,
+                  },
+                }
               ]}
             >
               <Routes>
                 <Route element={<Layout><Outlet /></Layout>}>
                   <Route path="/" element={<Dashboard />} />
+                  <Route path="subjects">
+                    <Route index element={<SubjectsList />} />
+                    <Route path="create" element={<SubjectsCreate />} />
+                  </Route>
                 </Route>
-
-
               </Routes>
               <Toaster />
               <RefineKbar />
