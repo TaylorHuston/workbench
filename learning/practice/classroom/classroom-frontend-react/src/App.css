@@ -575,4 +575,62 @@
       }
     }
   }
-}
+
+  .app-layout {
+    @apply min-h-screen flex;
+  }
+
+  .app-sidebar {
+    @apply w-56 shrink-0 border-r bg-sidebar p-4 flex flex-col gap-2;
+  }
+
+  .app-main {
+    @apply min-w-0 flex-1 p-6;
+  }
+
+  .nav-link {
+    @apply rounded-md px-3 py-2 text-sm text-sidebar-foreground;
+  }
+
+  .nav-link.is-active {
+    @apply bg-sidebar-accent text-sidebar-accent-foreground font-medium;
+  }
+
+  .subjects-table {
+    @apply w-full text-sm;
+  }
+  .subjects-table thead tr {
+    @apply border-b bg-muted;
+  }
+
+  .subjects-table th {
+    @apply px-4 py-3 text-left font-semibold;
+  }
+
+  .subjects-table td {
+    @apply px-4 py-3;
+  }
+
+  .subjects-table tbody tr {
+    @apply border-b;
+  }
+
+  .form-control {
+    @apply h-9 rounded-md border bg-background px-3 text-sm;
+  }
+
+  .primary-link {
+    @apply inline-flex h-9 items-center rounded-md bg-primary px-4 text-sm font-medium text-primary-foreground;
+  }
+
+  .subject-code {
+    @apply inline-flex rounded-md bg-primary px-2 py-0.5 text-xs font-medium text-primary-foreground;
+  }
+
+  .subject-department {
+    @apply inline-flex rounded-md bg-secondary px-2 py-0.5 text-xs font-medium text-secondary-foreground;
+  }
+
+  .breadcrumb {
+    @apply mb-4 flex items-center gap-2 text-sm text-muted-foreground;
+  }

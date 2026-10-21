@@ -1,2 +1,2 @@
 allowBuilds:
-  '@tailwindcss/oxide': set this to true or false
+  '@tailwindcss/oxide': true
