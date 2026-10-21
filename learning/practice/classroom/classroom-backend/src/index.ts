@@ -1,7 +1,9 @@
 import express from "express";
 import cors from "cors";
+import { auth } from "./lib/auth.js";
 
 import subjectsRouter from "./routes/subjects.js";
+import { toNodeHandler } from "better-auth/node";
 
 const app = express();
 const port = 8000;
@@ -12,6 +14,8 @@ if (!process.env.FRONTEND_URL) {
 
 app.use(express.json());
 app.use(cors({ origin: process.env.FRONTEND_URL, methods: ["GET", "POST", "PUT", "DELETE"], credentials: true }));
+
+app.all("/api/auth/*splat", toNodeHandler(auth));
 
 app.use("/api/subjects", subjectsRouter);
 
