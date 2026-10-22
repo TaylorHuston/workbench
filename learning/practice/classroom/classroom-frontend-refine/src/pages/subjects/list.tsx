@@ -1,20 +1,29 @@
-import { Breadcrumb } from "@/components/refine-ui/layout/breadcrumb";
-import { ListView } from "@/components/refine-ui/views/list-view";
-import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
-import { CreateButton } from "@/components/refine-ui/buttons/create";
-import { Badge } from "@/components/ui/badge";
-import { ShowButton } from "@/components/refine-ui/buttons/show";
-import { DEPARTMENT_OPTIONS } from "@/constants";
 import { Search } from "lucide-react";
 import { useMemo, useState } from "react";
-import { DataTable } from "@/components/refine-ui/data-table/data-table";
 import { useTable } from "@refinedev/react-table";
-import type { Subject } from "@/types";
 import { ColumnDef } from "@tanstack/react-table";
 
-const SubjectsList = () => {
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select";
+import { Badge } from "@/components/ui/badge";
+import { Input } from "@/components/ui/input";
+import { ListView } from "@/components/refine-ui/views/list-view";
+import { CreateButton } from "@/components/refine-ui/buttons/create";
+import { Breadcrumb } from "@/components/refine-ui/layout/breadcrumb";
+import { DataTable } from "@/components/refine-ui/data-table/data-table";
+import { ShowButton } from "@/components/refine-ui/buttons/show";
+
+import { Subject } from "@/types";
+import { DEPARTMENT_OPTIONS } from "@/constants";
+
+const SubjectListPage = () => {
   const [searchQuery, setSearchQuery] = useState("");
-  const [selectedDepartment, setSelectedDepartment] = useState("all");
+  const [selectedDepartment, setSelectedDepartment] = useState<string>("all");
 
   const subjectColumns = useMemo<ColumnDef<Subject>[]>(
     () => [
@@ -119,21 +128,20 @@ const SubjectsList = () => {
   return (
     <ListView>
       <Breadcrumb />
-
       <h1 className="page-title">Subjects</h1>
 
       <div className="intro-row">
-        <p>Quick access to essentials</p>
+        <p>Quick access to essential metrics and management tools.</p>
 
         <div className="actions-row">
           <div className="search-field">
             <Search className="search-icon" />
-            <input
+            <Input
               type="text"
-              className="pl-10 w-full"
               placeholder="Search by name..."
+              className="pl-10 w-full"
               value={searchQuery}
-              onChange={(e) => setSearchQuery(e.target.value)}
+              onChange={(event) => setSearchQuery(event.target.value)}
             />
           </div>
 
@@ -143,10 +151,11 @@ const SubjectsList = () => {
               onValueChange={setSelectedDepartment}
             >
               <SelectTrigger className="">
-                <SelectValue placeholder="Select a department" />
+                <SelectValue placeholder="Filter by department" />
               </SelectTrigger>
 
               <SelectContent>
+                <SelectItem value="all">All Departments</SelectItem>
                 {DEPARTMENT_OPTIONS.map((department) => (
                   <SelectItem key={department.value} value={department.value}>
                     {department.label}
@@ -156,7 +165,6 @@ const SubjectsList = () => {
             </Select>
 
             <CreateButton resource="subjects" />
-
           </div>
         </div>
       </div>
@@ -166,4 +174,4 @@ const SubjectsList = () => {
   );
 };
 
-export default SubjectsList;
+export default SubjectListPage;
