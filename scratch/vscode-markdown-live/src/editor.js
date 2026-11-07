@@ -9,11 +9,13 @@ import { calloutPreview, calloutTheme } from './calloutPreview.js'
 import { frontmatterPreview, frontmatterTheme } from './frontmatterPreview.js'
 import { nonstandardTablePreview, nonstandardTableTheme } from './nonstandardTablePreview.js'
 import { mermaidPreview } from './mermaidPreview.js'
+import { findFragment } from './wikilinkFragment.cjs'
 import { collapseOnSelectionFacet, livePreviewPlugin, markdownStylePlugin, mouseSelectingField, setMouseSelecting, tableEditorPlugin, codeBlockField, linkPlugin, editorTheme } from 'codemirror-live-markdown'
 
 const vscode = acquireVsCodeApi()
 const status = document.getElementById('status')
 let view, shadow = '', inflight = null, conflict = false, newline = '\n', applying = false
+let pendingNavigation = null, pendingJump = null, lastJumpId = null
 function localText() { return view.state.doc.toString().replace(/\n/g, newline) }
 function stop() {
   conflict = true
@@ -23,9 +25,47 @@ function stop() {
 function sendNext() {
   if (!view || conflict || inflight) return
   const text = localText()
-  if (text === shadow) return
+  if (text === shadow) {
+    if (pendingNavigation) {
+      const target = pendingNavigation
+      pendingNavigation = null
+      vscode.postMessage({ type: 'follow-wikilink', target, base: shadow })
+    }
+    runJump()
+    return
+  }
   inflight = text
   vscode.postMessage({ type: 'edit', base: shadow, text })
+}
+function runJump() {
+  if (!pendingJump || !view || inflight || (!conflict && localText() !== shadow)) return
+  const jump = pendingJump
+  pendingJump = null
+  if (jump.id === lastJumpId) { vscode.postMessage({ type: 'jump-result', id: jump.id }); return }
+  lastJumpId = jump.id
+  if (conflict) {
+    status.className = 'visible'
+    status.textContent = 'Resolve the edit conflict before following this link.'
+  } else {
+    const result = findFragment(view.state.doc.toString(), jump.fragment)
+    if (result.kind === 'found') {
+      status.className = ''
+      status.textContent = ''
+      view.dispatch({ selection: { anchor: result.position }, effects: EditorView.scrollIntoView(result.position, { y: 'center' }) })
+      view.focus()
+    } else {
+      status.className = 'visible'
+      status.textContent = result.kind === 'ambiguous' ? 'More than one heading or block matches this link.' : result.kind === 'missing' ? 'The linked heading or block was not found.' : 'This heading or block link is not supported.'
+    }
+  }
+  vscode.postMessage({ type: 'jump-result', id: jump.id })
+}
+function followWikilink(target) {
+  if (conflict) return
+  status.className = ''
+  status.textContent = ''
+  pendingNavigation = target
+  sendNext()
 }
 function install(text) {
   if (/\r\n/.test(text) && /(^|[^\r])\n/.test(text)) {
@@ -85,12 +125,42 @@ function install(text) {
   for (const eventName of ['mousedown', 'beforeinput', 'paste', 'drop']) {
     view.dom.addEventListener(eventName, blockTableEdit, true)
   }
+  // Handle modifier mousedown before CodeMirror changes the selection and
+  // replaces the preview widget with source, which otherwise loses the click.
+  view.dom.addEventListener('mousedown', event => {
+    const link = event.target instanceof Element ? event.target.closest('.cm-wikilink-widget, .cm-wikilink-source') : null
+    if (!link || event.button !== 0 || !(event.metaKey || event.ctrlKey)) return
+    const pos = view.posAtDOM(link, 0)
+    const line = view.state.doc.lineAt(pos)
+    // The upstream widget also matches embeds. Only a non-embed wikilink
+    // whose source corresponds to this widget is eligible for navigation.
+    for (const match of line.text.matchAll(/(!?)\[\[([^\]|]+)(?:\|([^\]]+))?\]\]/g)) {
+      const start = line.from + match.index + match[1].length
+      const end = line.from + match.index + match[0].length
+      if (pos >= start && pos <= end && !match[1]) {
+        event.preventDefault()
+        event.stopPropagation()
+        followWikilink(match[2])
+        break
+      }
+    }
+  }, true)
   view.contentDOM.addEventListener('mousedown', () => view.dispatch({effects: setMouseSelecting.of(true)}))
   document.addEventListener('mouseup', () => requestAnimationFrame(() => view.dispatch({effects: setMouseSelecting.of(false)})))
 }
 window.addEventListener('message', event => {
   const message = event.data
-  if (message.type === 'conflict') { stop(); return }
+  if (message.type === 'jump-to-fragment' && Number.isSafeInteger(message.id) && typeof message.fragment === 'string') {
+    pendingJump = { id: message.id, fragment: message.fragment }
+    runJump()
+    return
+  }
+  if (message.type === 'navigation-error') {
+    status.className = 'visible'
+    status.textContent = message.message
+    return
+  }
+  if (message.type === 'conflict') { pendingNavigation = null; stop(); runJump(); return }
   if (message.type === 'ack') {
     if (conflict) return
     if (inflight !== message.text) { stop(); return }
@@ -100,7 +170,7 @@ window.addEventListener('message', event => {
     return
   }
   if (message.type !== 'document' || typeof message.text !== 'string') return
-  if (!view) { install(message.text); return }
+  if (!view) { install(message.text); runJump(); return }
   if (conflict || message.text === shadow || message.text === inflight) return
   if (inflight || localText() !== shadow) { stop(); return }
   const text = message.text

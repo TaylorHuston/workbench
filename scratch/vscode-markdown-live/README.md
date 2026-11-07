@@ -15,7 +15,7 @@ npm run build
 code --extensionDevelopmentPath="$PWD"
 ```
 
-In the Extension Development Host, open a **disposable copy** of a Markdown file and use **Reopen Editor With…**. Rebuild and restart the host after changes. Optionally run `sh test/theme-browser.sh`, `sh test/lists-browser.sh`, `sh test/tables-browser.sh`, `sh test/callouts-browser.sh`, `sh test/frontmatter-browser.sh`, and `sh test/mermaid-browser.sh` after building to check the UI in a browser; these require `agent-browser`. Do not test against irreplaceable notes.
+In the Extension Development Host, open a **disposable copy** of a Markdown file and use **Reopen Editor With…**. Rebuild and restart the host after changes. Optionally run `sh test/theme-browser.sh`, `sh test/lists-browser.sh`, `sh test/tables-browser.sh`, `sh test/nonstandard-table-browser.sh`, `sh test/callouts-browser.sh`, `sh test/frontmatter-browser.sh`, `sh test/mermaid-browser.sh`, `sh test/wikilink-browser.sh`, and `sh test/wikilink-fragment-browser.sh` after building to check the UI in a browser; these require `agent-browser`. Do not test against irreplaceable notes.
 
 ## What to evaluate
 
@@ -25,7 +25,7 @@ In the Extension Development Host, open a **disposable copy** of a Markdown file
 - YAML frontmatter is expanded by default; **Hide properties** collapses it without changing the file. Collapse state is local to the editor view.
 - Obsidian-style callouts render as highlighted blocks with their title; the source reappears on the active line. Foldable callouts are not yet collapsible.
 - Mermaid code blocks render locally as diagrams; use **Edit diagram source** to edit the original Markdown. Invalid diagrams show their source and a fallback message. Mermaid runs in strict security mode and does not enable diagram click actions. Reload the editor after changing the VS Code theme.
-- Wikilink syntax is preserved as source, but navigation and Obsidian link resolution are not implemented.
+- Cmd-click (macOS) or Ctrl-click an existing rendered wikilink to open its note in this editor. Resolution searches only the current local workspace folder: explicit relative paths, workspace paths, unique path suffixes and unique filenames are supported; duplicate names are not guessed. Edits must be acknowledged before navigation. `[[note|label]]`, `[[note#Heading]]`, `[[#Heading]]`, and block-ID links such as `[[note#^block-id]]` are supported. Missing or duplicate heading/block destinations are reported rather than guessed. Nested heading paths, note-property aliases, embeds, links inside table previews, remote workspaces and link creation/autocomplete are not supported. Resolution is not full Obsidian parity.
 
 ## Boundaries
 
