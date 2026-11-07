@@ -1,0 +1,24 @@
+<!doctype html>
+<html><head><style>
+  body {
+    --vscode-editor-foreground: #d4d4d4;
+    --vscode-editor-background: #1e1e1e;
+    --vscode-editor-font-family: monospace;
+    --vscode-editor-font-size: 14px;
+    --vscode-textCodeBlock-background: #303030;
+    --vscode-textLink-foreground: #3794ff;
+    color: var(--vscode-editor-foreground);
+    background: var(--vscode-editor-background);
+  }
+</style></head><body>
+  <div id="status"></div><div id="editor"></div>
+  <script>
+    window.acquireVsCodeApi = () => ({
+      postMessage: () => setTimeout(() => window.postMessage({
+        type: 'document',
+        text: '# Heading\n\n- Bullet item\n- [ ] Open task\n- [x] Done task\n\n1. First item\n2. Second item\n\nSome **bold**, *italic* and `code`.\n\n| Header | Other |\n| --- | --- |\n| Value | Text |\n\n```js\nconst x = 3\n```\n',
+      }, '*'), 0),
+    })
+  </script>
+  <script src="../dist/editor.js"></script>
+</body></html>

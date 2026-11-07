@@ -1,0 +1,6 @@
+const { test } = require('node:test')
+const assert = require('node:assert/strict')
+const { classifyEdit } = require('../src/protocol.cjs')
+test('accepts an edit against the current document', () => assert.equal(classifyEdit('a', 'a', 'ab'), 'apply'))
+test('rejects an edit based on stale text', () => assert.equal(classifyEdit('external', 'a', 'ab'), 'conflict'))
+test('recognizes a duplicate without writing', () => assert.equal(classifyEdit('ab', 'a', 'ab'), 'already-applied'))

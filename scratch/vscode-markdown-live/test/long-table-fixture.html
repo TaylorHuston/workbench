@@ -1,0 +1,10 @@
+<!doctype html><html><head><style>
+html, body, #editor { height: 100%; margin: 0 }
+.cm-editor { height: 100% } .cm-scroller { overflow: auto }
+body { --vscode-editor-foreground: #ddd; --vscode-editor-background: #222 }
+</style></head><body><div id="status"></div><div id="editor"></div>
+<script>
+  const text = '# Document\n\n' + Array.from({length: 400}, (_, i) => `Paragraph ${i}: More content before the table.\n\n`).join('') +
+    '| Name | Location | State |\n| --- | --- | --- |\n| One | [[note|Label]] | Active |\n| Two | Other | Ready |\n'
+  window.acquireVsCodeApi = () => ({postMessage: () => setTimeout(() => window.postMessage({type: 'document', text}, '*'), 0)})
+</script><script src="../dist/editor.js"></script></body></html>
