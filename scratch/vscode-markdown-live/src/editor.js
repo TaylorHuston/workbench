@@ -6,6 +6,8 @@ import { EditorView, keymap } from '@codemirror/view'
 import { GFM } from '@lezer/markdown'
 import { codeMirrorListPreview } from './listPreview.js'
 import { calloutPreview, calloutTheme } from './calloutPreview.js'
+import { frontmatterPreview, frontmatterTheme } from './frontmatterPreview.js'
+import { nonstandardTablePreview, nonstandardTableTheme } from './nonstandardTablePreview.js'
 import { mermaidPreview } from './mermaidPreview.js'
 import { collapseOnSelectionFacet, livePreviewPlugin, markdownStylePlugin, mouseSelectingField, setMouseSelecting, tableEditorPlugin, codeBlockField, linkPlugin, editorTheme } from 'codemirror-live-markdown'
 
@@ -38,7 +40,7 @@ function install(text) {
       extensions: [
         markdown({ extensions: [GFM] }), EditorView.lineWrapping,
         keymap.of(defaultKeymap), collapseOnSelectionFacet.of(true), mouseSelectingField,
-        livePreviewPlugin, markdownStylePlugin, codeMirrorListPreview, calloutPreview, calloutTheme, mermaidPreview, codeBlockField({ copyButton: false }), linkPlugin(), editorTheme,
+        livePreviewPlugin, markdownStylePlugin, codeMirrorListPreview, calloutPreview, calloutTheme, frontmatterPreview, frontmatterTheme, nonstandardTablePreview, nonstandardTableTheme, mermaidPreview, codeBlockField({ copyButton: false }), linkPlugin(), editorTheme,
         EditorView.contentAttributes.of({ 'aria-label': 'Markdown live editor' }),
         EditorView.updateListener.of(update => { if (update.docChanged && !applying) sendNext() }),
         Prec.high(EditorView.theme({

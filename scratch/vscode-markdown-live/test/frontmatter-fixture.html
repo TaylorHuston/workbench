@@ -1,0 +1,3 @@
+<!doctype html><html><head><style>html,body,#editor{height:100%;margin:0}.cm-editor{height:100%}.cm-scroller{overflow:auto}body{--vscode-editor-foreground:#ddd;--vscode-editor-background:#222;--vscode-textCodeBlock-background:#333;--vscode-textLink-foreground:#3794ff;--vscode-editor-font-family:monospace;--vscode-editor-font-size:14px}</style></head><body><div id="status"></div><div id="editor"></div>
+<script>window.outbound=[];window.fixture='---\ntitle: Example\nstatus: draft\n---\n# Note\n\nBody text.\n';window.acquireVsCodeApi=()=>({postMessage: message=>{window.outbound.push(message);if(message.type==='ready')setTimeout(()=>window.postMessage({type:'document',text:window.fixture},'*'),0)}})</script>
+<script src="../dist/editor.js"></script></body></html>
