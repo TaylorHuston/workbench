@@ -28,7 +28,9 @@
   },
   "scripts": {
     "build": "node build.mjs",
-    "test": "node --test test/*.test.cjs"
+    "test": "node --test test/*.test.cjs",
+    "vscode:prepublish": "npm run build",
+    "package:vsix": "vsce package --no-dependencies --allow-missing-repository --skip-license --out markdown-live-spike.vsix"
   },
   "dependencies": {
     "@codemirror/commands": "^6.11.1",
@@ -43,6 +45,7 @@
     "mermaid": "^12.3.0"
   },
   "devDependencies": {
+    "@vscode/vsce": "^4.1.0",
     "esbuild": "^0.25.0"
   }
 }

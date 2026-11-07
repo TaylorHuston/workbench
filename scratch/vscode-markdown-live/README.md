@@ -17,6 +17,18 @@ code --extensionDevelopmentPath="$PWD"
 
 In the Extension Development Host, open a **disposable copy** of a Markdown file and use **Reopen Editor With…**. Rebuild and restart the host after changes. Optionally run `sh test/theme-browser.sh`, `sh test/lists-browser.sh`, `sh test/tables-browser.sh`, `sh test/nonstandard-table-browser.sh`, `sh test/callouts-browser.sh`, `sh test/frontmatter-browser.sh`, `sh test/mermaid-browser.sh`, `sh test/wikilink-browser.sh`, and `sh test/wikilink-fragment-browser.sh` after building to check the UI in a browser; these require `agent-browser`. Do not test against irreplaceable notes.
 
+## Local installation
+
+For personal use without publishing to the Marketplace, build and install the VSIX:
+
+```sh
+npm install
+npm run package:vsix
+code --install-extension "$PWD/markdown-live-spike.vsix" --force
+```
+
+This installs `local.markdown-live-spike` in the default VS Code profile. Rebuild and reinstall after changes; local VSIX installations do not automatically track this repository. Reload VS Code if prompted. The editor remains opt-in under **Reopen Editor With…** and does not change the default Markdown editor. Packaging is for local use only; licensing and third-party notices need review before distributing the VSIX.
+
 ## What to evaluate
 
 - Inline Markdown rendering, revealing syntax at the cursor, and light/dark VS Code theme behavior.
