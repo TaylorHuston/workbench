@@ -5,6 +5,7 @@ import { EditorState, Prec, StateEffect } from '@codemirror/state'
 import { EditorView, keymap } from '@codemirror/view'
 import { GFM } from '@lezer/markdown'
 import { codeMirrorListPreview } from './listPreview.js'
+import { mermaidPreview } from './mermaidPreview.js'
 import { collapseOnSelectionFacet, livePreviewPlugin, markdownStylePlugin, mouseSelectingField, setMouseSelecting, tableEditorPlugin, codeBlockField, linkPlugin, editorTheme } from 'codemirror-live-markdown'
 
 const vscode = acquireVsCodeApi()
@@ -36,7 +37,7 @@ function install(text) {
       extensions: [
         markdown({ extensions: [GFM] }), EditorView.lineWrapping,
         keymap.of(defaultKeymap), collapseOnSelectionFacet.of(true), mouseSelectingField,
-        livePreviewPlugin, markdownStylePlugin, codeMirrorListPreview, codeBlockField({ copyButton: false }), linkPlugin(), editorTheme,
+        livePreviewPlugin, markdownStylePlugin, codeMirrorListPreview, mermaidPreview, codeBlockField({ copyButton: false }), linkPlugin(), editorTheme,
         EditorView.contentAttributes.of({ 'aria-label': 'Markdown live editor' }),
         EditorView.updateListener.of(update => { if (update.docChanged && !applying) sendNext() }),
         Prec.high(EditorView.theme({
@@ -51,6 +52,10 @@ function install(text) {
           '.cm-codeblock-widget [class*="hljs-"]': { color: 'var(--vscode-editor-foreground)' },
           '.cm-table-editor th, .cm-table-editor td, .cm-table-widget th, .cm-table-widget td': { borderColor: 'var(--vscode-panel-border, var(--vscode-editor-foreground))' },
           '.cm-table-toggle': { color: 'var(--vscode-button-foreground, var(--vscode-editor-foreground))', backgroundColor: 'var(--vscode-button-background, var(--vscode-editor-background))', borderColor: 'var(--vscode-panel-border, var(--vscode-editor-foreground))' },
+          '.cm-mermaid-preview': { overflowX: 'auto', padding: '12px', backgroundColor: 'var(--vscode-textCodeBlock-background, var(--vscode-editor-background))', color: 'var(--vscode-editor-foreground)' },
+          '.cm-mermaid-preview svg': { maxWidth: '100%', height: 'auto' },
+          '.cm-mermaid-toolbar': { display: 'flex', justifyContent: 'flex-end', marginBottom: '8px' },
+          '.cm-mermaid-toolbar button': { color: 'var(--vscode-button-foreground)', backgroundColor: 'var(--vscode-button-background)', border: '0', padding: '4px 8px', cursor: 'pointer' },
           '.cm-cursor': { borderLeftColor: 'var(--vscode-editorCursor-foreground)' },
           '.cm-selectionBackground': { backgroundColor: 'var(--vscode-editor-selectionBackground) !important' },
         })),
