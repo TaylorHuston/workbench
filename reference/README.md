@@ -2,7 +2,7 @@
 
 Curated, reusable examples that serve as this repository's canonical implementation or syntax reference for a subject.
 
-IMPORTANT: As the content in here is meant for canonical reference it should all be coded by hand. No direct LLM assistance, outside of possibly basic IDE autocomplete, is allowed. Review and advice can be.
+Direct LLM implementation assistance is allowed here. The learner-written code restriction applies only to [`../learning/`](../learning/); see [`../AGENTS.md`](../AGENTS.md) for the owning policy.
 
 Reference material should:
 

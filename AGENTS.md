@@ -27,13 +27,13 @@ This is source-led practice from books, courses, tutorials, and videos.
 
 This contains narrow, readable, canonical examples.
 
-- Reference implementation code must also be written by Taylor, not by an LLM.
-- Agents may review, explain, diagnose, and recommend changes, but must not directly author or rewrite implementation examples.
+- Direct implementation assistance is allowed: agents may author, edit, review, explain, and diagnose reference examples within the requested scope.
+- The learner-written implementation restriction applies only to `learning/`.
 - Keep each example understandable in isolation and focused on the concept it demonstrates; production-scale architecture is usually counterproductive here.
 - Preserve attribution and licenses for examples derived from external material.
 - A nested guide may add stricter rules. In particular, consult `reference/frameworks/NextJS/my-app/AGENTS.md` before working in that app.
 
-For both `learning/` and `reference/`, narrowly scoped non-code maintenance such as indexes, attribution, or README corrections is allowed when explicitly requested, provided it does not supply the exercise or implementation itself.
+For `learning/`, narrowly scoped non-code maintenance such as indexes, attribution, or README corrections is allowed when explicitly requested, provided it does not supply the exercise or implementation itself.
 
 ### `scratch/`
 
@@ -96,7 +96,7 @@ Run only checks relevant to the changed project and report any check that could 
 - Terraform examples: `terraform fmt -check` and, only with safe initialization and no unintended backend access, `terraform validate`;
 - Docker course projects: the specific documented Make target rather than a repository-wide command.
 
-Do not run deployment or live-provider checks as routine verification. For `learning/` and `reference/`, stay within the review/advice boundary even when a fix appears obvious.
+Do not run deployment or live-provider checks as routine verification. For `learning/`, stay within the review/advice boundary even when a fix appears obvious.
 
 ## Diagrams
 
