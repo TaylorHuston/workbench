@@ -48,3 +48,16 @@
 :root[data-theme="dark"] #tree summary::before{color:#9bbcae}
 :root[data-theme="dark"] .folder-icon,:root[data-theme="dark"] .folder-icon::before{border-color:#9bbcae}
 @media(prefers-reduced-motion:reduce){#tree summary::before{transition:none}}
+
+.root-label{width:calc(100% - 24px);border:1px solid transparent;text-align:left;font:inherit;font-size:13px;font-weight:650}
+.root-label.selected,#tree summary.selected,#tree .file.selected{outline:1px solid #82ab9b;background:#d5e4de;color:#234e46}
+.tree-actions{display:grid;grid-template-columns:1fr 1fr;gap:5px;padding:10px 12px 0}
+.tree-actions button{border:1px solid #c5d8d0;border-radius:5px;padding:6px 4px;background:#f5f9f6;color:#355d53;font-size:12px}
+.tree-actions button:hover:not(:disabled){background:#daeae2}
+.tree-actions button:disabled{opacity:.5;cursor:default}
+.selection,.tree-status{font-size:11px;line-height:1.4;margin:8px 16px 0;color:#526e64;overflow-wrap:anywhere}
+.tree-status:empty{display:none}
+:root[data-theme="dark"] .root-label.selected,:root[data-theme="dark"] #tree summary.selected,:root[data-theme="dark"] #tree .file.selected{outline-color:#8ab7a4;background:#344d43;color:#e3f4eb}
+:root[data-theme="dark"] .tree-actions button{background:#253a32;border-color:#4c6b5d;color:#d4eae0}
+:root[data-theme="dark"] .tree-actions button:hover:not(:disabled){background:#375346}
+:root[data-theme="dark"] .selection,:root[data-theme="dark"] .tree-status{color:#b2cec0}

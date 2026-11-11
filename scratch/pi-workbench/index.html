@@ -10,7 +10,9 @@
     <aside class="sidebar" aria-label="File browser">
       <header class="brand"><span class="brand-mark">π</span><span><strong>Pi Workbench</strong><small>Local workspace</small></span></header>
       <div class="explorer-heading"><span>Files</span><button id="refresh" title="Refresh file tree" aria-label="Refresh file tree">↻</button></div>
-      <div class="root-label"><span class="folder-icon" aria-hidden="true"></span><span>~/.pi</span><span class="root-tag">root folder</span></div>
+      <button class="root-label" id="select-root" type="button"><span class="folder-icon" aria-hidden="true"></span><span>~/.pi</span><span class="root-tag">root folder</span></button>
+      <div class="tree-actions" aria-label="File actions"><button id="new-file" type="button">New file</button><button id="new-folder" type="button">New folder</button><button id="rename" type="button" disabled>Rename</button><button id="trash" type="button" disabled>Trash</button></div>
+      <p id="selection" class="selection" title="Selected location">Selected: ~/.pi</p><p id="tree-status" class="tree-status" role="status" aria-live="polite"></p>
       <nav id="tree" aria-label="Markdown files"></nav>
       <footer class="sidebar-footer">Local files · explicit save</footer>
     </aside>
