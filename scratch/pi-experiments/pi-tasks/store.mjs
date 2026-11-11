@@ -126,6 +126,42 @@ export async function updateCurrentState(root, id, currentState, expectedContent
     return { id, content: after };
   } finally { await file.close(); }
 }
+export async function closeTask(root, id, status, conclusion, expectedContent, session, timestamp = new Date()) {
+  const base = taskPath(root, id);
+  if (status !== 'done' && status !== 'dropped') throw new Error('Closure status must be done or dropped');
+  conclusion = headingFree(conclusion, 'conclusion');
+  if (typeof expectedContent !== 'string') throw new Error('expectedContent from readTask is required');
+  validateSession(session);
+  const ts = localTimestamp(timestamp);
+  const file = await open(`${base}.md`, 'r+');
+  let after, title;
+  try {
+    const before = await file.readFile('utf8');
+    if (before !== expectedContent) throw new Error('Task changed since it was read; read it again');
+    const states = [...before.matchAll(/^status:[ \t]*(\S+)[ \t]*$/gm)];
+    if (states.length !== 1 || !statuses.has(states[0][1])) throw new Error('Task must have one valid status');
+    if (states[0][1] === 'done' || states[0][1] === 'dropped') throw new Error('Task is already closed');
+    if (/^## Conclusion[ \t]*$/m.test(before)) throw new Error('Task already has a conclusion; preserve it and resolve manually');
+    const current = /(^## Current state[ \t]*\n)[\s\S]*?(?=^## |(?![\s\S]))/gm;
+    if ([...before.matchAll(current)].length !== 1) throw new Error('Task must have one Current state section');
+    const titles = [...before.matchAll(/^# (.+)$/gm)];
+    if (titles.length !== 1) throw new Error('Task must have one title');
+    title = titles[0][1].trim();
+    after = before.replace(/^status:[ \t]*\S+[ \t]*$/m, () => `status: ${status}`)
+      .replace(current, (_match, heading) => `${heading}Closed (${status}).\n\n`);
+    after += `${after.endsWith('\n') ? '\n' : '\n\n'}## Conclusion\n${conclusion}\n`;
+    await file.write(after, 0, 'utf8');
+    await file.truncate(Buffer.byteLength(after));
+  } finally { await file.close(); }
+  const task = { id, content: after };
+  const comment = `Closed: ${title}`;
+  try {
+    const entry = await appendDay(root, 'task_close', comment, session, id, timestamp);
+    return { task, day: { status: 'appended', entry } };
+  } catch (error) {
+    return { task, day: { status: 'uncertain', date: ts.slice(0, 10), intendedEntry: { ts, session, type: 'task_close', task: id, comment }, message: 'Task closed, but day append failed or has an unknown outcome. Inspect the day log before manually appending; do not reopen the task or retry blindly.', error: error instanceof Error ? error.message : String(error) } };
+  }
+}
 export async function listOpenTasks(root) {
   const dir = join(rootPath(root), 'tasks');
   let months; try { months = await readdir(dir, { withFileTypes: true }); } catch (e) { if (e.code === 'ENOENT') return []; throw e; }

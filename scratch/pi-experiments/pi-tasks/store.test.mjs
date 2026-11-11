@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import { mkdtemp, readFile, rm, stat, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { createTask, createTaskWithDay, readTask, appendTask, updateCurrentState, listOpenTasks, openDay, appendDay } from './store.mjs';
+import { createTask, createTaskWithDay, readTask, appendTask, updateCurrentState, closeTask, listOpenTasks, openDay, appendDay } from './store.mjs';
 
 test('day read, append, attribution and task-open recording', async () => {
   const root = await mkdtemp(join(tmpdir(), 'pi-tasks-day-test-'));
@@ -69,6 +69,67 @@ test('task create, list, attributed append, guarded state update and preservatio
     await assert.rejects(appendTask(root, id, 'delete', 'x', session), /Invalid entry type/);
     await assert.rejects(readTask(root, '../../outside'), /Invalid task ID/);
     await assert.rejects(createTask(undefined, id, 'x', 'y', 'z'), /PI_TASKS_ROOT/);
+  } finally { await rm(root, { recursive: true, force: true }); }
+});
+
+test('close records done or dropped with a minimal day entry and preserves history', async () => {
+  const root = await mkdtemp(join(tmpdir(), 'pi-tasks-close-test-'));
+  try {
+    const session = { harness: 'pi', id: 'closing-session' };
+    const when = new Date(2026, 10, 10, 12);
+    for (const status of ['done', 'dropped']) {
+      const id = `2026-11/2026-11-10-${status}`;
+      await createTask(root, id, `Task ${status}`, 'Original goal', 'Next: finish');
+      await appendTask(root, id, 'note', 'Keep this history', session, when);
+      const original = await readTask(root, id);
+      await assert.rejects(closeTask(root, id, status, 'Conclusion', original.content + 'stale', session, when), /changed since/);
+      await assert.rejects(closeTask(root, id, 'active', 'Conclusion', original.content, session, when), /Closure status/);
+      const result = await closeTask(root, id, status, 'Result costs $& and $1.', original.content, session, when);
+      assert.equal(result.day.status, 'appended');
+      assert.match(result.task.content, new RegExp(`^status: ${status}`, 'm'));
+      assert.match(result.task.content, /## Description\nOriginal goal/);
+      assert.match(result.task.content, new RegExp(`## Current state\\nClosed \\(${status}\\)\\.`));
+      assert.ok(result.task.content.includes('## Conclusion\nResult costs $& and $1.'));
+      assert.equal(result.day.entry.comment, `Closed: Task ${status}`);
+      assert.equal(result.day.entry.type, 'task_close');
+      assert.equal(result.day.entry.task, id);
+      assert.deepEqual(result.day.entry.session, session);
+      assert.equal((await readTask(root, id)).entries[0].comment, 'Keep this history');
+      await assert.rejects(closeTask(root, id, status, 'Again', result.task.content, session, when), /already closed/);
+    }
+    assert.equal((await openDay(root, '2026-11-10')).entries.length, 2);
+    assert.deepEqual(await listOpenTasks(root), []);
+  } finally { await rm(root, { recursive: true, force: true }); }
+});
+
+test('close reports uncertain day append and preserves closed task', async () => {
+  const root = await mkdtemp(join(tmpdir(), 'pi-tasks-close-partial-'));
+  try {
+    const id = '2026-11/2026-11-10-partial-close';
+    const created = await createTask(root, id, 'Partial close', 'Goal', 'Next');
+    await writeFile(join(root, 'days'), 'blocks day directory');
+    const session = { harness: 'pi', id: 'closing-session' };
+    const result = await closeTask(root, id, 'done', 'Finished', created.content, session, new Date(2026, 10, 10, 12));
+    assert.equal(result.day.status, 'uncertain');
+    assert.equal(result.day.date, '2026-11-10');
+    assert.equal(result.day.intendedEntry.type, 'task_close');
+    assert.equal(result.day.intendedEntry.task, id);
+    assert.match(result.day.message, /do not reopen.*retry blindly/);
+    assert.equal((await readTask(root, id)).content, result.task.content);
+    await assert.rejects(closeTask(root, id, 'done', 'Finished', result.task.content, session), /already closed/);
+  } finally { await rm(root, { recursive: true, force: true }); }
+});
+
+test('close refuses to overwrite an existing conclusion', async () => {
+  const root = await mkdtemp(join(tmpdir(), 'pi-tasks-conclusion-'));
+  try {
+    const id = '2026-11/2026-11-10-existing-conclusion';
+    const created = await createTask(root, id, 'Existing', 'Goal', 'Next');
+    const file = join(root, 'tasks', `${id}.md`);
+    const content = created.content + '\n## Conclusion\nPrevious conclusion.\n';
+    await writeFile(file, content);
+    await assert.rejects(closeTask(root, id, 'done', 'New conclusion', content, { harness: 'pi', id: 'session' }), /already has a conclusion/);
+    assert.equal(await readFile(file, 'utf8'), content);
   } finally { await rm(root, { recursive: true, force: true }); }
 });
 

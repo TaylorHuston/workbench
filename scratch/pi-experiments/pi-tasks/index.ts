@@ -1,6 +1,6 @@
 import { Type } from '@earendil-works/pi-ai';
 import type { ExtensionAPI } from '@earendil-works/pi-coding-agent';
-import { createTaskWithDay, readTask, appendTask, updateCurrentState, listOpenTasks, openDay, appendDay } from './store.mjs';
+import { createTaskWithDay, readTask, appendTask, updateCurrentState, closeTask, listOpenTasks, openDay, appendDay } from './store.mjs';
 
 export default function (pi: ExtensionAPI) {
   const sessionFor = (ctx: { sessionManager: { getSessionId(): string } }) => {
@@ -29,37 +29,57 @@ export default function (pi: ExtensionAPI) {
       return { content: [{ type: 'text', text: JSON.stringify(result, null, 2) }], details: undefined };
     },
   });
+  const taskId = Type.String({ description: 'Task ID: YYYY-MM/YYYY-MM-DD-slug' });
+  const output = (result: unknown) => ({ content: [{ type: 'text' as const, text: JSON.stringify(result, null, 2) }], details: undefined });
+
   pi.registerTool({
-    name: 'pi_tasks', label: 'Experimental tasks',
-    description: 'Manage experimental task records in the explicitly configured PI_TASKS_ROOT. Never use for existing .llm records. Actions: create, read, list, append, update_state. Create also appends a day entry; if that fails, inspect the day and do not recreate the task or retry blindly. Logs are append-only.',
+    name: 'task_create', label: 'Create task',
+    description: 'Create an experimental task and append a task_open day entry. If the day append fails, inspect the day and do not recreate the task or retry blindly.',
+    parameters: Type.Object({ id: taskId, title: Type.String(), description: Type.String(), currentState: Type.String() }),
+    async execute(_id, args, _signal, _update, ctx) {
+      const created = await createTaskWithDay(process.env.PI_TASKS_ROOT, args.id, args.title, args.description, args.currentState, sessionFor(ctx));
+      return { ...output(created), ...(created.day.status === 'appended' ? {} : { isError: true }) };
+    },
+  });
+  pi.registerTool({
+    name: 'task_read', label: 'Read task',
+    description: 'Read an experimental task anchor and its working log.',
+    parameters: Type.Object({ id: taskId }),
+    async execute(_id, args) { return output(await readTask(process.env.PI_TASKS_ROOT, args.id)); },
+  });
+  pi.registerTool({
+    name: 'task_list', label: 'List tasks',
+    description: 'List active and blocked experimental tasks.',
+    parameters: Type.Object({}),
+    async execute() { return output(await listOpenTasks(process.env.PI_TASKS_ROOT)); },
+  });
+  pi.registerTool({
+    name: 'task_append', label: 'Append task entry',
+    description: 'Append a session-attributed entry to an experimental task log. Do not blindly retry a failed or uncertain append; inspect the log first.',
     parameters: Type.Object({
-      action: Type.Union([Type.Literal('create'), Type.Literal('read'), Type.Literal('list'), Type.Literal('append'), Type.Literal('update_state')]),
-      id: Type.Optional(Type.String({ description: 'Task ID: YYYY-MM/YYYY-MM-DD-slug' })),
-      title: Type.Optional(Type.String()), description: Type.Optional(Type.String()),
-      currentState: Type.Optional(Type.String()), expectedContent: Type.Optional(Type.String({ description: 'Exact task content from read, required for update_state' })),
-      type: Type.Optional(Type.Union([Type.Literal('note'), Type.Literal('attempt'), Type.Literal('decision'), Type.Literal('blocker'), Type.Literal('evidence'), Type.Literal('checkpoint'), Type.Literal('resume'), Type.Literal('handoff'), Type.Literal('correction')])),
-      comment: Type.Optional(Type.String()),
+      id: taskId,
+      type: Type.Union([Type.Literal('note'), Type.Literal('attempt'), Type.Literal('decision'), Type.Literal('blocker'), Type.Literal('evidence'), Type.Literal('checkpoint'), Type.Literal('resume'), Type.Literal('handoff'), Type.Literal('correction')]),
+      comment: Type.String(),
     }),
     async execute(_id, args, _signal, _update, ctx) {
-      const root = process.env.PI_TASKS_ROOT;
-      const task = () => { if (!args.id) throw new Error('id is required'); return args.id; };
-      let result: unknown;
-      switch (args.action) {
-        case 'list': result = await listOpenTasks(root); break;
-        case 'read': result = await readTask(root, task()); break;
-        case 'create': {
-          const created = await createTaskWithDay(root, task(), args.title, args.description, args.currentState, sessionFor(ctx));
-          if (created.day.status !== 'appended') return { content: [{ type: 'text', text: JSON.stringify(created, null, 2) }], details: undefined, isError: true };
-          result = created;
-          break;
-        }
-        case 'update_state': result = await updateCurrentState(root, task(), args.currentState, args.expectedContent); break;
-        case 'append': {
-          result = await appendTask(root, task(), args.type, args.comment, sessionFor(ctx));
-          break;
-        }
-      }
-      return { content: [{ type: 'text', text: JSON.stringify(result, null, 2) }], details: undefined };
+      return output(await appendTask(process.env.PI_TASKS_ROOT, args.id, args.type, args.comment, sessionFor(ctx)));
+    },
+  });
+  pi.registerTool({
+    name: 'task_close', label: 'Close task',
+    description: 'Close an experimental task as done or dropped and record a minimal day entry. If the day append fails, inspect the day and do not reopen or retry blindly.',
+    parameters: Type.Object({ id: taskId, status: Type.Union([Type.Literal('done'), Type.Literal('dropped')]), conclusion: Type.String(), expectedContent: Type.String({ description: 'Exact task anchor content from task_read' }) }),
+    async execute(_id, args, _signal, _update, ctx) {
+      const closed = await closeTask(process.env.PI_TASKS_ROOT, args.id, args.status, args.conclusion, args.expectedContent, sessionFor(ctx));
+      return { ...output(closed), ...(closed.day.status === 'appended' ? {} : { isError: true }) };
+    },
+  });
+  pi.registerTool({
+    name: 'task_update_state', label: 'Update task state',
+    description: 'Update an experimental task current state, using exact content returned by task_read as the conflict check.',
+    parameters: Type.Object({ id: taskId, currentState: Type.String(), expectedContent: Type.String({ description: 'Exact task anchor content from task_read' }) }),
+    async execute(_id, args) {
+      return output(await updateCurrentState(process.env.PI_TASKS_ROOT, args.id, args.currentState, args.expectedContent));
     },
   });
 }
