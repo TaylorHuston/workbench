@@ -76,6 +76,18 @@ test('moves files and empty folders to an injected Trash; rejects stale and none
   assert.deepEqual((await readdir(trashDir)).sort(), ['.hidden', 'note.md']);
 });
 
+test('HTTP reload targets only the open session', async (t) => {
+  const { store } = await fixture(t); const calls = [];
+  const agent = { snapshot: () => ({ key: 'current' }), reload: async (key) => { calls.push(key); return { key, reloading: false }; } };
+  const server = createServerFor(store, agent);
+  await new Promise((resolve) => server.listen(0, '127.0.0.1', resolve)); t.after(() => new Promise((resolve) => server.close(resolve)));
+  const url = `http://127.0.0.1:${server.address().port}`;
+  const post = (key) => fetch(`${url}/api/agent/reload`, { method: 'POST', headers: { origin: url, 'content-type': 'application/json' }, body: JSON.stringify({ key }) });
+  assert.equal((await post('stale')).status, 400); assert.deepEqual(calls, []);
+  const response = await post('current'); assert.equal(response.status, 200); assert.deepEqual(await response.json(), { key: 'current', reloading: false });
+  assert.deepEqual(calls, ['current']);
+});
+
 test('HTTP rejects cross-origin writes and foreign host headers', async (t) => {
   const { store } = await fixture(t); let agentCalls = 0;
   const agent = { send() { agentCalls++; return { accepted: true }; }, snapshot() { return null; } };
@@ -92,10 +104,12 @@ test('HTTP rejects cross-origin writes and foreign host headers', async (t) => {
   assert.equal((await fetch(`${url}/api/entry`, { method: 'POST', headers: { origin: 'https://attacker.example', 'content-type': 'application/json' }, body: '{}' })).status, 403);
   assert.equal((await fetch(`${url}/api/agent/send`, { method: 'POST', headers: { origin: 'https://attacker.example', 'content-type': 'application/json' }, body: '{}' })).status, 403);
   assert.equal((await fetch(`${url}/api/agent/archive`, { method: 'POST', headers: { origin: 'https://attacker.example', 'content-type': 'application/json' }, body: '{}' })).status, 403);
+  assert.equal((await fetch(`${url}/api/agent/reload`, { method: 'POST', headers: { origin: 'https://attacker.example', 'content-type': 'application/json' }, body: '{}' })).status, 403);
   assert.equal((await fetch(`${url}/api/agent/state`, { headers: { origin: 'https://attacker.example' } })).status, 403);
   assert.equal(agentCalls, 0);
   assert.equal((await fetch(`${url}/api/agent/send`, { method: 'POST', headers: { origin: url, 'content-type': 'application/json' }, body: JSON.stringify({ id: 'stale', message: 'fixture' }) })).status, 400);
   assert.equal(agentCalls, 0);
+  assert.equal((await fetch(`${url}/api/agent/reload`, { method: 'POST', headers: { origin: url, 'content-type': 'application/json' }, body: JSON.stringify({ key: 'stale' }) })).status, 400);
   assert.equal((await fetch(`${url}/api/file`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: '{}' })).status, 403);
   const created = await fetch(`${url}/api/entry`, { method: 'POST', headers: { origin: url, 'content-type': 'application/json' }, body: JSON.stringify({ action: 'create', parent: '', name: 'new.md', kind: 'file' }) });
   assert.equal(created.status, 200);

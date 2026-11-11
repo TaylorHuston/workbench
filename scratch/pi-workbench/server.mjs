@@ -147,7 +147,8 @@ export function createServerFor(workbench, agent) {
         const { path, content, version, action, parent, name, kind, key, message, archived } = JSON.parse(data);
         if (url.pathname === '/api/agent/archive') return json(res, 200, await agent.setArchived(key, archived));
         if (url.pathname === '/api/agent/open') return json(res, 200, await agent.open(key));
-        if (['/api/agent/close', '/api/agent/send', '/api/agent/stop'].includes(url.pathname) && (typeof key !== 'string' || agent.snapshot()?.key !== key)) throw new Error('Session changed; review the active session before retrying');
+        if (['/api/agent/close', '/api/agent/reload', '/api/agent/send', '/api/agent/stop'].includes(url.pathname) && (typeof key !== 'string' || agent.snapshot()?.key !== key)) throw new Error('Session changed; review the active session before retrying');
+        if (url.pathname === '/api/agent/reload') return json(res, 200, await agent.reload(key));
         if (url.pathname === '/api/agent/close') { await agent.close(); return json(res, 200, { ok: true }); }
         if (url.pathname === '/api/agent/send') return json(res, 200, agent.send(message));
         if (url.pathname === '/api/agent/stop') { await agent.stop(); return json(res, 200, { ok: true }); }

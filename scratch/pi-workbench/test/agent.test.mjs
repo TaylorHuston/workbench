@@ -4,7 +4,7 @@ import { mkdtemp, mkdir, readFile, writeFile, rm, stat } from 'node:fs/promises'
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { Type } from 'typebox';
-import { createAgentSession, DefaultResourceLoader, ModelRuntime, SessionManager, SettingsManager } from '@earendil-works/pi-coding-agent';
+import { createAgentSession, DefaultPackageManager, DefaultResourceLoader, ModelRuntime, ProjectTrustStore, SessionManager, SettingsManager } from '@earendil-works/pi-coding-agent';
 import { fauxProvider, fauxAssistantMessage, fauxToolCall } from '@earendil-works/pi-ai';
 import { createAgentHost } from '../agent.mjs';
 
@@ -141,6 +141,131 @@ test('includes sessions made by the previous Workbench spike', async (t) => {
   const opened = await host.open(sessions[0].key); assert.equal(opened.id, sessions[0].id); await host.close();
 });
 
+test('discovers user and trusted project skills without enabling extensions or project runtime settings', async (t) => {
+  const { cwd, agentDir, modelRuntime, faux, options, seed } = await setup(t); await seed();
+  async function skill(base, name, body, extra = '') {
+    const dir = join(base, name); await mkdir(dir, { recursive: true });
+    await writeFile(join(dir, 'SKILL.md'), `---\nname: ${name}\ndescription: Fixture ${name}\n${extra}---\n\n${body}\n`);
+  }
+  await skill(join(agentDir, 'skills'), 'fixture-user', 'USER INSTRUCTIONS');
+  await skill(join(cwd, '.agents', 'skills'), 'fixture-project', 'PROJECT INSTRUCTIONS');
+  await skill(join(cwd, '.pi', 'skills'), 'fixture-command-only', 'COMMAND ONLY INSTRUCTIONS', 'disable-model-invocation: true\n');
+  await skill(join(cwd, '.pi', 'custom-skills'), 'fixture-configured', 'CONFIGURED INSTRUCTIONS');
+  await writeFile(join(cwd, '.pi', 'settings.json'), JSON.stringify({ skills: ['./custom-skills'] }));
+  await writeFile(join(cwd, '.pi', 'SYSTEM.md'), 'PROJECT SYSTEM OVERRIDE MUST NOT LOAD');
+  let loaded, session;
+  const host = createAgentHost({ ...options, makeSession: async ({ cwd: path, loader, settings, manager }) => {
+    loaded = loader.getSkills(); assert.equal(loader.getExtensions().extensions.length, 0);
+    const result = await createAgentSession({ cwd: path, agentDir, resourceLoader: loader, settingsManager: settings, sessionManager: manager, modelRuntime, model: faux.getModel(), tools: ['read'] });
+    session = result.session; return result;
+  } });
+  const [saved] = await host.list();
+  await host.open(saved.key);
+  assert.ok(loaded.skills.some((item) => item.name === 'fixture-user'));
+  assert.ok(!loaded.skills.some((item) => item.name === 'fixture-project'));
+  assert.match(host.snapshot().warning, /Project skills skipped/);
+  assert.match(session.systemPrompt, /fixture-user/);
+  assert.doesNotMatch(session.systemPrompt, /USER INSTRUCTIONS|PROJECT SYSTEM OVERRIDE MUST NOT LOAD/);
+  await host.close();
+  new ProjectTrustStore(agentDir).set(cwd, true);
+  await host.open(saved.key);
+  for (const name of ['fixture-user', 'fixture-project', 'fixture-configured', 'fixture-command-only']) assert.ok(loaded.skills.some((item) => item.name === name), name);
+  assert.equal(loaded.skills.find((item) => item.name === 'fixture-user').sourceInfo.scope, 'user');
+  assert.equal(loaded.skills.find((item) => item.name === 'fixture-project').sourceInfo.scope, 'project');
+  assert.match(session.systemPrompt, /fixture-project/); assert.match(session.systemPrompt, /fixture-configured/);
+  assert.doesNotMatch(session.systemPrompt, /fixture-command-only|PROJECT INSTRUCTIONS|PROJECT SYSTEM OVERRIDE MUST NOT LOAD/);
+  let expanded = false;
+  faux.setResponses([(context) => { expanded = JSON.stringify(context.messages).includes('COMMAND ONLY INSTRUCTIONS'); return fauxAssistantMessage('Skill command handled.'); }]);
+  await run(host, '/skill:fixture-command-only'); assert.equal(expanded, true);
+  await host.close();
+  new ProjectTrustStore(agentDir).set(cwd, false);
+  await host.open(saved.key); assert.ok(!loaded.skills.some((item) => item.name === 'fixture-project')); await host.close();
+});
+
+test('uses the global trust default when no project decision is saved', async (t) => {
+  const { cwd, agentDir, options, seed } = await setup(t); await seed();
+  const dir = join(cwd, '.pi', 'skills', 'fixture-default'); await mkdir(dir, { recursive: true });
+  await writeFile(join(dir, 'SKILL.md'), '---\nname: fixture-default\ndescription: Trust default fixture\n---\nInstructions\n');
+  for (const [preference, expected] of [['always', true], ['never', false], ['ask', false]]) {
+    let names;
+    const host = createAgentHost({ ...options, settingsFactory: () => SettingsManager.inMemory({ defaultProjectTrust: preference }), makeSession: async (args) => {
+      names = args.loader.getSkills().skills.map((item) => item.name); return options.makeSession(args);
+    } });
+    const [saved] = await host.list(); await host.open(saved.key);
+    assert.equal(names.includes('fixture-default'), expected, preference); await host.close();
+  }
+  await assert.rejects(stat(join(agentDir, 'trust.json')), { code: 'ENOENT' });
+});
+
+test('does not install missing packages while discovering skills', async (t) => {
+  const { cwd, agentDir, options, seed } = await setup(t); await seed();
+  await mkdir(join(cwd, '.pi'), { recursive: true });
+  await writeFile(join(cwd, '.pi', 'settings.json'), JSON.stringify({ packages: ['npm:@fixture/never-install-this@1.0.0'] }));
+  new ProjectTrustStore(agentDir).set(cwd, true);
+  const original = DefaultPackageManager.prototype.installParsedSource, offline = process.env.PI_OFFLINE;
+  let attempts = 0;
+  DefaultPackageManager.prototype.installParsedSource = async () => { attempts++; throw new Error('Unexpected installation'); };
+  delete process.env.PI_OFFLINE;
+  try {
+    const host = createAgentHost(options); const [saved] = await host.list(); await host.open(saved.key);
+    assert.equal(attempts, 0); assert.match(host.snapshot().warning, /uninstalled Pi package/); await host.close();
+  } finally {
+    DefaultPackageManager.prototype.installParsedSource = original;
+    if (offline === undefined) delete process.env.PI_OFFLINE; else process.env.PI_OFFLINE = offline;
+  }
+});
+
+test('reloads the open session and picks up skills and context without losing history or its lock', async (t) => {
+  const { cwd, agentDir, modelRuntime, faux, options, seed } = await setup(t); await seed();
+  let runtimeSession;
+  const host = createAgentHost({ ...options, makeSession: async ({ cwd: path, loader, settings, manager }) => {
+    const result = await createAgentSession({ cwd: path, agentDir, resourceLoader: loader, settingsManager: settings, sessionManager: manager, modelRuntime, model: faux.getModel(), tools: ['read'] });
+    runtimeSession = result.session; return result;
+  } });
+  const [saved] = await host.list(); const opened = await host.open(saved.key); const before = host.snapshot().messages;
+  const [info] = await SessionManager.listAll(join(agentDir, 'sessions', 'project-group')); const original = await readFile(info.path);
+  const dir = join(agentDir, 'skills', 'fixture-reload'); await mkdir(dir, { recursive: true });
+  await writeFile(join(dir, 'SKILL.md'), '---\nname: fixture-reload\ndescription: Newly available skill\n---\nFull instructions\n');
+  await writeFile(join(cwd, 'AGENTS.md'), 'New fixture context for reload.');
+  assert.doesNotMatch(runtimeSession.systemPrompt, /fixture-reload|New fixture context/);
+  const states = []; const unsubscribe = host.subscribe((event) => { if (event.type === 'snapshot') states.push(event.value); });
+  const result = await host.reload(saved.key); unsubscribe();
+  assert.equal(result.id, opened.id); assert.deepEqual(result.messages, before);
+  assert.ok(states.some((state) => state?.reloading)); assert.equal(states.at(-1).reloading, false);
+  assert.match(runtimeSession.systemPrompt, /fixture-reload/); assert.match(runtimeSession.systemPrompt, /New fixture context/);
+  assert.doesNotMatch(runtimeSession.systemPrompt, /Full instructions/);
+  assert.deepEqual(await readFile(info.path), original);
+  const other = createAgentHost(options); await assert.rejects(other.open(saved.key), /already in use/);
+  faux.setResponses([fauxAssistantMessage('Continued after reload.')]); await run(host, 'Continue');
+  assert.ok(host.snapshot().messages.some((item) => item.text === 'Continued after reload.')); await host.close();
+});
+
+test('guards session activity during reload and reports partial reload failure', async (t) => {
+  const { options, seed } = await setup(t); await seed(); let runtimeSession;
+  const host = createAgentHost({ ...options, makeSession: async (args) => { const result = await options.makeSession(args); runtimeSession = result.session; return result; } });
+  const [saved] = await host.list(); await host.open(saved.key);
+  const original = DefaultPackageManager.prototype.resolve; let unblock, started;
+  const gate = new Promise((resolve) => { unblock = resolve; });
+  const began = new Promise((resolve) => { started = resolve; });
+  DefaultPackageManager.prototype.resolve = async function (...args) { started(); await gate; return original.apply(this, args); };
+  try {
+    const pending = host.reload(saved.key); await began;
+    assert.equal(host.snapshot().reloading, true);
+    assert.throws(() => host.send('Do not send'), /running/);
+    await assert.rejects(host.close(), /finish opening/);
+    await assert.rejects(host.reload(saved.key), /finish opening or reloading/);
+    unblock(); await pending;
+  } finally { unblock(); DefaultPackageManager.prototype.resolve = original; }
+  const events = []; const unsubscribe = host.subscribe((event) => events.push(event));
+  const priorReload = runtimeSession.reload; runtimeSession.reload = async () => { throw new Error('Synthetic reload failure'); };
+  try {
+    await assert.rejects(host.reload(saved.key), /partially reloaded/);
+    assert.equal(host.snapshot().reloading, false); assert.equal(host.snapshot().key, saved.key);
+    assert.ok(events.some((event) => event.type === 'error' && /partially reloaded/.test(event.message)));
+    const other = createAgentHost(options); await assert.rejects(other.open(saved.key), /already in use/);
+  } finally { runtimeSession.reload = priorReload; unsubscribe(); await host.close(); }
+});
+
 test('does not activate unavailable recorded extension tools when restoring', async (t) => {
   const { agentDir, modelRuntime, faux, options, seed } = await setup(t); await seed(); let runtimeSession, extensionCount = -1;
   const host = createAgentHost({ ...options, makeSession: async ({ cwd, loader, settings, manager }) => {
@@ -152,6 +277,15 @@ test('does not activate unavailable recorded extension tools when restoring', as
   assert.equal(extensionCount, 0); assert.ok(runtimeSession);
   assert.deepEqual(runtimeSession.getActiveToolNames(), [], 'Unavailable recorded extension tools must not become active');
   await host.close();
+});
+
+test('refuses reload while a run is active or the session key is stale', async (t) => {
+  const { faux, options, seed } = await setup(t, { tokensPerSecond: 30 }); await seed(); const host = createAgentHost(options);
+  faux.setResponses([fauxAssistantMessage('Slow synthetic response. '.repeat(100))]);
+  const [saved] = await host.list(); await host.open(saved.key);
+  await assert.rejects(host.reload('0'.repeat(64)), /Session changed/);
+  host.send('Running'); await assert.rejects(host.reload(saved.key), /Stop the current run/);
+  await host.stop(); await host.close();
 });
 
 test('can stop an active synthetic run', async (t) => {

@@ -1,7 +1,7 @@
 import { promises as fs } from 'node:fs';
-import { dirname, isAbsolute, join } from 'node:path';
+import { dirname, isAbsolute, join, resolve, sep } from 'node:path';
 import { createHash, randomUUID } from 'node:crypto';
-import { createAgentSession, DefaultResourceLoader, getAgentDir, SessionManager, SettingsManager } from '@earendil-works/pi-coding-agent';
+import { createAgentSession, createSyntheticSourceInfo, DefaultPackageManager, DefaultResourceLoader, getAgentDir, hasTrustRequiringProjectResources, loadSkills, ProjectTrustStore, SessionManager, SettingsManager } from '@earendil-works/pi-coding-agent';
 import { createArchiveStore } from './archive.mjs';
 
 // Opens saved sessions in a new SDK runtime; it cannot attach to a running CLI process.
@@ -19,7 +19,7 @@ export function createAgentHost({ agentDir = getAgentDir(), stateDir = join(agen
     return value ? { role: message.role, text: value } : null;
   };
   const snapshot = () => active ? {
-    id: active.session.sessionId, key: active.key, cwd: active.cwd, busy, warning: active.warning,
+    id: active.session.sessionId, key: active.key, cwd: active.cwd, busy, reloading: opening, warning: active.warning,
     model: active.session.model ? `${active.session.model.provider}/${active.session.model.id}` : null,
     tools: active.session.getActiveToolNames(),
     messages: active.session.messages.map(project).filter(Boolean), partial,
@@ -34,6 +34,28 @@ export function createAgentHost({ agentDir = getAgentDir(), stateDir = join(agen
     return path;
   }
   const keyFor = (path) => createHash('sha256').update(path).digest('hex');
+  async function discoverSkills(cwd, settings) {
+    const needsTrust = hasTrustRequiringProjectResources(cwd);
+    const savedTrust = new ProjectTrustStore(agentDir).get(cwd);
+    const trusted = savedTrust ?? (!needsTrust || settings.getDefaultProjectTrust() === 'always');
+    const skillSettings = SettingsManager.create(cwd, agentDir, { projectTrusted: trusted });
+    const manager = new DefaultPackageManager({ cwd, agentDir, settingsManager: skillSettings });
+    const missing = [];
+    // Discover installed resources without installing missing packages or starting extensions.
+    const paths = await manager.resolve(async (source) => { missing.push(source); return 'skip'; });
+    const enabled = paths.skills.filter((resource) => resource.enabled);
+    const result = loadSkills({ cwd, agentDir, skillPaths: enabled.map((resource) => resource.path), includeDefaults: false });
+    for (const skill of result.skills) {
+      const file = resolve(skill.filePath);
+      const resource = enabled.find((entry) => file === resolve(entry.path) || file.startsWith(resolve(entry.path) + sep));
+      if (resource) skill.sourceInfo = createSyntheticSourceInfo(skill.filePath, resource.metadata);
+    }
+    const warnings = [];
+    if (!trusted && needsTrust) warnings.push('Project skills skipped: Pi project trust has not been granted.');
+    if (missing.length) warnings.push(`${missing.length} uninstalled Pi package(s) skipped.`);
+    if (result.diagnostics.length) warnings.push(`${result.diagnostics.length} skill discovery warning(s).`);
+    return { result, warnings };
+  }
   async function discover() {
     const nativeRoot = join(agentDir, 'sessions');
     let groups;
@@ -100,7 +122,12 @@ export function createAgentHost({ agentDir = getAgentDir(), stateDir = join(agen
       const manager = SessionManager.open(info.path, dirname(info.path));
       if (manager.getSessionId() !== info.id || manager.getCwd() !== info.cwd) throw new Error('Session identity changed; refresh the session list');
       const settings = settingsFactory ? settingsFactory(path, agentDir) : SettingsManager.create(path, agentDir, { projectTrusted: false });
-      const loader = new DefaultResourceLoader({ cwd: path, agentDir, settingsManager: settings, noExtensions: true, noSkills: true, noPromptTemplates: true, noThemes: true });
+      const { result: discoveredSkills, warnings: skillWarnings } = await discoverSkills(path, settings);
+      const skills = { current: discoveredSkills };
+      // Keep project settings out of the runtime; only the skill resolver observes trusted project settings.
+      // The base loader has no packages so its reload cannot install missing packages as a side effect.
+      const loaderSettings = SettingsManager.inMemory({ ...settings.getGlobalSettings(), packages: [] }, { projectTrusted: false });
+      const loader = new DefaultResourceLoader({ cwd: path, agentDir, settingsManager: loaderSettings, noExtensions: true, noSkills: true, noPromptTemplates: true, noThemes: true, skillsOverride: () => skills.current });
       await loader.reload();
       const result = makeSession ? await makeSession({ cwd: path, agentDir, settings, loader, manager }) : await createAgentSession({ cwd: path, agentDir, settingsManager: settings, resourceLoader: loader, sessionManager: manager });
       session = result.session;
@@ -120,12 +147,32 @@ export function createAgentHost({ agentDir = getAgentDir(), stateDir = join(agen
         if (event.type === 'tool_execution_start') publish({ type: 'tool', name: event.toolName, phase: 'start' });
         if (event.type === 'tool_execution_end') publish({ type: 'tool', name: event.toolName, phase: 'end', isError: event.isError });
       });
-      active = { cwd: path, key, session, lock, unsubscribe, warning: result.modelFallbackMessage || null }; lock = undefined; session = undefined;
-      publish({ type: 'snapshot', value: snapshot() });
+      active = { cwd: path, key, session, lock, unsubscribe, skills, modelWarning: result.modelFallbackMessage || null, warning: [result.modelFallbackMessage, ...skillWarnings].filter(Boolean).join(' ') || null }; lock = undefined; session = undefined;
+      opening = false; publish({ type: 'snapshot', value: snapshot() });
       return snapshot();
     } catch (error) {
       session?.dispose(); if (lock) await release(lock).catch(() => {}); throw error;
     } finally { opening = false; }
+  }
+  async function reload(key) {
+    if (!active || active.key !== key) throw new Error('Session changed; review the active session before retrying');
+    if (opening) throw new Error('Wait for the session to finish opening or reloading');
+    if (busy) throw new Error('Stop the current run before reloading');
+    const current = active; opening = true; publish({ type: 'snapshot', value: snapshot() });
+    let failure;
+    try {
+      const settings = settingsFactory ? settingsFactory(current.cwd, agentDir) : SettingsManager.create(current.cwd, agentDir, { projectTrusted: false });
+      const { result: skills, warnings } = await discoverSkills(current.cwd, settings);
+      current.skills.current = skills;
+      await current.session.reload();
+      current.warning = [current.modelWarning, ...warnings].filter(Boolean).join(' ') || null;
+    } catch (error) {
+      failure = new Error(`Session reload failed; the runtime may be partially reloaded. Close and reopen it if needed. ${error.message}`);
+    } finally {
+      opening = false; publish({ type: 'snapshot', value: snapshot() });
+    }
+    if (failure) { publish({ type: 'error', message: failure.message }); throw failure; }
+    return snapshot();
   }
   function send(message) {
     if (!active) throw new Error('Open a session first');
@@ -140,5 +187,5 @@ export function createAgentHost({ agentDir = getAgentDir(), stateDir = join(agen
   }
   async function stop() { if (active && busy) { await active.session.abort(); await runPromise; } }
   function subscribe(listener) { listeners.add(listener); listener({ type: 'snapshot', value: snapshot() }); return () => listeners.delete(listener); }
-  return { list, open, close, send, stop, snapshot, subscribe, setArchived };
+  return { list, open, close, reload, send, stop, snapshot, subscribe, setArchived };
 }

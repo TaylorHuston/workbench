@@ -15,14 +15,14 @@ function row(role, text) {
   $('#agent-transcript').scrollTop = $('#agent-transcript').scrollHeight; return body;
 }
 function controls() {
-  const running = !!state?.busy, open = !!state;
-  $('#agent-close').disabled = !open || running;
+  const running = !!state?.busy, reloading = !!state?.reloading, open = !!state;
+  $('#agent-close').disabled = $('#agent-reload').disabled = !open || running || reloading;
   document.querySelectorAll('.session-button').forEach((button) => {
-    button.disabled = running;
+    button.disabled = running || reloading;
     if (button.dataset.key === state?.key) button.setAttribute('aria-current', 'true');
     else button.removeAttribute('aria-current');
   });
-  $('#agent-send').disabled = !open || running || !state.model; $('#agent-message').disabled = !open || running || !state.model;
+  $('#agent-send').disabled = !open || running || reloading || !state.model; $('#agent-message').disabled = !open || running || reloading || !state.model;
   $('#agent-stop').disabled = !running; $('#agent-stop').hidden = !running; $('#agent-send').hidden = running;
   $('#session-runtime').hidden = !open;
   $('#agent-model').textContent = open ? state.model ?? 'No model available' : '';
@@ -38,7 +38,7 @@ function snapshot(value) {
   }
   controls();
   if ($('#agent-message').value.trim() && draftSessionId && state?.key !== draftSessionId) status('Draft belongs to another session; copy or clear it before sending.');
-  else if (!lastError) status(state?.busy ? 'Running…' : state?.warning || (state ? 'Ready' : ''));
+  else if (!lastError) status(state?.reloading ? 'Reloading…' : state?.busy ? 'Running…' : state?.warning || (state ? 'Ready' : ''));
 }
 const events = new EventSource('/api/agent/events');
 events.onmessage = ({ data }) => {
@@ -52,7 +52,7 @@ events.onmessage = ({ data }) => {
   else if (event.type === 'archives_changed' && sessionsLoaded) { applyArchiveChange(event.key, event.archived); }
 };
 events.onerror = () => status('Disconnected; reconnecting…');
-events.onopen = () => { lastError = ''; status(state?.busy ? 'Running…' : state?.warning || (state ? 'Ready' : '')); if (sessionsLoaded) void loadSessions(); };
+events.onopen = () => { lastError = ''; status(state?.reloading ? 'Reloading…' : state?.busy ? 'Running…' : state?.warning || (state ? 'Ready' : '')); if (sessionsLoaded) void loadSessions(); };
 
 async function action(fn) { try { lastError = ''; await fn(); } catch (error) { lastError = error.message; status(lastError); } }
 function showView(sessions) {
@@ -138,6 +138,7 @@ async function loadSessions() {
 $('#files-tab').addEventListener('click', () => showView(false));
 $('#agent-tab').addEventListener('click', () => { showView(true); if (!sessionsLoaded) void loadSessions(); });
 $('#session-refresh').addEventListener('click', () => { void loadSessions(); });
+$('#agent-reload').addEventListener('click', () => action(async () => { status('Reloading…'); await api('/api/agent/reload', { key: state?.key }); }));
 $('#agent-close').addEventListener('click', () => action(async () => {
   if ($('#agent-message').value.trim() && !confirm('Discard the unsent message and close the session?')) return;
   await api('/api/agent/close', { key: state?.key }); $('#agent-message').value = ''; draftSessionId = null;

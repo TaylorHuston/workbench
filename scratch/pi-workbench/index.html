@@ -11,7 +11,7 @@
       <header class="brand"><span class="brand-mark" aria-hidden="true">π</span><strong>Pi Workbench</strong><button id="theme-toggle" type="button" aria-label="Switch to dark mode" title="Switch to dark mode" aria-pressed="false"><svg class="theme-moon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M20.9 13A9 9 0 0 1 11 3.1 9 9 0 1 0 20.9 13Z"/></svg><svg class="theme-sun" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" aria-hidden="true"><circle cx="12" cy="12" r="4"/><path d="M12 2v2m0 16v2M4.93 4.93l1.42 1.42m11.3 11.3 1.42 1.42M2 12h2m16 0h2M4.93 19.07l1.42-1.42m11.3-11.3 1.42-1.42"/></svg></button></header>
       <nav class="sidebar-tabs" aria-label="Sidebar views"><button id="files-tab" type="button" aria-pressed="true">Files</button><button id="agent-tab" type="button" aria-pressed="false">Sessions</button></nav>
       <div id="explorer-panel" class="sidebar-panel">
-      <div class="explorer-heading"><span>Files</span><div class="heading-actions"><button id="save" type="button" disabled>Save changes</button><button id="refresh" title="Refresh file tree" aria-label="Refresh file tree">↻</button></div></div>
+      <div class="explorer-heading"><span>Files</span><button id="refresh" title="Refresh file tree" aria-label="Refresh file tree">↻</button></div>
       <button class="root-label" id="select-root" type="button"><span class="folder-icon" aria-hidden="true"></span><span>~/.pi</span><span class="root-tag">root folder</span></button>
       <div class="tree-actions" aria-label="File actions"><button id="new-file" type="button">New file</button><button id="new-folder" type="button">New folder</button><button id="rename" type="button" disabled>Rename</button><button id="trash" type="button" disabled>Trash</button></div>
       <p id="selection" class="selection" title="Selected location">Selected: ~/.pi</p><p id="status" class="tree-status" role="status" aria-live="polite"></p><p id="tree-status" class="tree-status" role="status" aria-live="polite"></p>
@@ -22,14 +22,14 @@
         <p id="session-list-status" class="tree-status" role="status" aria-live="polite"></p>
         <nav id="session-list" aria-label="Saved Pi sessions"></nav>
         <p id="agent-status" class="agent-status" role="status" aria-live="polite"></p>
-        <div id="session-runtime" class="session-runtime" hidden><span id="agent-model"></span><button id="agent-close" type="button" title="Close the Workbench runtime without archiving or deleting the session" disabled>Close session</button></div>
+        <div id="session-runtime" class="session-runtime" hidden><span id="agent-model"></span><button id="agent-reload" type="button" title="Reload this session’s skills and settings" aria-label="Reload session" disabled>↻</button><button id="agent-close" type="button" title="Close the Workbench runtime without archiving or deleting the session" disabled>Close session</button></div>
       </div>
       <footer class="sidebar-footer">Local files · explicit save</footer>
     </aside>
     <main class="workspace">
       <div id="files-view" class="files-view">
       <section id="empty" class="empty"><div class="empty-icon">✳</div><h1>A space to work.</h1><p>Choose a Markdown file from the sidebar to open it here.</p><span>Everything stays on this machine.</span></section>
-      <section id="document" class="document" hidden><div class="document-heading"><span class="document-kind">Markdown document</span><h1 id="filename"></h1><p id="document-path"></p></div><div id="editor" aria-label="Markdown editor"></div></section>
+      <section id="document" class="document" hidden><div class="document-heading"><div class="document-heading-top"><span class="document-kind">Markdown document</span><div class="document-actions"><span id="document-status" role="status" aria-live="polite"></span><button id="discard" type="button" disabled>Discard</button><button id="save" type="button" disabled>Save</button></div></div><h1 id="filename"></h1><p id="document-path"></p></div><div id="editor" aria-label="Markdown editor"></div></section>
       </div>
       <section id="agent-view" class="agent-view" hidden aria-label="Pi agent session">
         <div id="agent-transcript" class="agent-transcript" aria-label="Conversation" aria-live="polite"><p class="agent-placeholder">Choose a saved session in the sidebar.</p></div>

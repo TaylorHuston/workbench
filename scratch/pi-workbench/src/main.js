@@ -24,7 +24,7 @@ $('#theme-toggle').addEventListener('click', () => {
   try { localStorage.setItem('pi-workbench-theme', chosenTheme); } catch { /* Keep the choice for this page. */ }
   applyTheme(chosenTheme);
 });
-let view, current, original = '', version, ending = 'lf', saving = false, opening = false, managing = false;
+let view, current, original = '', version, ending = 'lf', saving = false, opening = false, managing = false, stale = false;
 let selected = { path: '', kind: 'directory' };
 const containers = new Map([['', $('#tree')]]);
 const parentOf = (path) => path.includes('/') ? path.slice(0, path.lastIndexOf('/')) : '';
@@ -41,13 +41,19 @@ function select(path, kind) {
 select('', 'directory');
 const normalize = (text) => text.replace(/\r\n/g, '\n');
 function dirty() { return !!view && view.state.doc.toString() !== original; }
+function updateControls() {
+  const disabled = !current || !dirty() || saving || opening || managing;
+  $('#save').disabled = $('#discard').disabled = disabled;
+}
 function updateStatus(message) {
-  $('#status').textContent = message ?? (dirty() ? 'Unsaved changes' : current ? 'Saved' : '');
-  $('#save').disabled = !current || !dirty() || saving;
+  const text = message ?? (stale ? `File changed on disk.${dirty() ? ' Edits are unsaved.' : ''} Reopen it to load the latest version.` : dirty() ? 'Unsaved changes' : current ? 'Saved' : '');
+  $('#status').textContent = current ? '' : text;
+  $('#document-status').textContent = text;
+  updateControls();
 }
 async function api(url, options) {
   const response = await fetch(url, options); const result = await response.json();
-  if (!response.ok) throw new Error(result.error || 'Request failed');
+  if (!response.ok) { const error = new Error(result.error || 'Request failed'); error.status = response.status; throw error; }
   return result;
 }
 async function loadTree(target, path = '') {
@@ -79,28 +85,34 @@ async function openFile(path, button) {
   try {
     updateStatus('Opening…'); const file = await api(`/api/file?path=${encodeURIComponent(path)}`);
     if (view && view.state.doc.toString() !== before) { updateStatus('Editor changed while opening; try again.'); return; }
-    view?.destroy(); current = path; original = normalize(file.content); version = file.version; ending = file.lineEnding;
+    view?.destroy(); current = path; original = normalize(file.content); version = file.version; ending = file.lineEnding; stale = false;
     $('#empty').hidden = true; $('#document').hidden = false; $('#filename').textContent = path.split('/').at(-1); $('#document-path').textContent = `~/.pi/${path}`;
     document.querySelectorAll('.file.active').forEach((node) => node.classList.remove('active')); button.classList.add('active'); select(path, 'file');
     view = new EditorView({ parent: $('#editor'), state: EditorState.create({ doc: original, extensions: [history(), keymap.of([...defaultKeymap, ...historyKeymap]), markdown({ extensions: [GFM] }), EditorView.lineWrapping, EditorView.contentAttributes.of({ 'aria-label': 'Markdown source editor' }), placeholder('Start writing…'), mouseSelectingField, livePreviewPlugin, markdownStylePlugin, editorTheme, EditorView.updateListener.of((update) => { if (update.docChanged) updateStatus(); })] }) });
     updateStatus();
-  } catch (error) { updateStatus(error.message); } finally { opening = false; }
+  } catch (error) { updateStatus(error.message); } finally { opening = false; updateControls(); }
 }
 async function save() {
-  if (!view || !current || !dirty() || saving || managing) return;
+  if (!view || !current || !dirty() || saving || opening || managing) return;
   const snapshot = view.state.doc.toString(); saving = true; updateStatus('Saving…');
   try {
     const content = ending === 'crlf' ? snapshot.replace(/\n/g, '\r\n') : snapshot;
     const result = await api('/api/file', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ path: current, content, version }) });
-    version = result.version; original = snapshot; saving = false; updateStatus();
-  } catch (error) { saving = false; updateStatus(error.message); }
+    version = result.version; original = snapshot; stale = false; saving = false; updateStatus();
+  } catch (error) { if (error.status === 409) stale = true; saving = false; updateStatus(error.message); }
+}
+function discard() {
+  if (!view || !current || !dirty() || saving || opening || managing) return;
+  if (!confirm('Discard unsaved changes and restore the last loaded or saved version?')) return;
+  view.dispatch({ changes: { from: 0, to: view.state.doc.length, insert: original } });
+  updateStatus();
 }
 async function manage(action, kind) {
   if (managing || saving || opening) return;
   const target = { ...selected };
   const affectsEditor = action !== 'create' && containsCurrent(target.path);
   if (affectsEditor && dirty()) { $('#tree-status').textContent = 'Save or discard the open document before modifying it.'; return; }
-  managing = true;
+  managing = true; updateControls();
   if (affectsEditor && view) view.contentDOM.contentEditable = 'false';
   let name, itemVersion;
   try {
@@ -121,7 +133,7 @@ async function manage(action, kind) {
       $('#filename').textContent = current.split('/').at(-1); $('#document-path').textContent = `~/.pi/${current}`;
     }
     if (action === 'trash' && affectsEditor) {
-      view?.destroy(); view = undefined; current = undefined; original = ''; version = undefined;
+      view?.destroy(); view = undefined; current = undefined; original = ''; version = undefined; stale = false;
       $('#document').hidden = true; $('#empty').hidden = false; updateStatus();
     }
     managing = false;
@@ -131,9 +143,10 @@ async function manage(action, kind) {
     else if (container) { delete container.dataset.loaded; container.replaceChildren(); }
     $('#tree-status').textContent = action === 'trash' ? 'Moved to Trash.' : action === 'rename' ? 'Renamed.' : 'Created.';
   } catch (error) { $('#tree-status').textContent = error.message; }
-  finally { managing = false; if (view) view.contentDOM.contentEditable = 'true'; }
+  finally { managing = false; if (view) view.contentDOM.contentEditable = 'true'; updateControls(); }
 }
 $('#save').addEventListener('click', save);
+$('#discard').addEventListener('click', discard);
 $('#select-root').addEventListener('click', () => select('', 'directory'));
 $('#new-file').addEventListener('click', () => manage('create', 'file'));
 $('#new-folder').addEventListener('click', () => manage('create', 'directory'));
