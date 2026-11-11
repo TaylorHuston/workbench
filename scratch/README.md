@@ -12,5 +12,6 @@ In-progress experiments, technical spikes, proofs of concept, and disposable cod
 - [`pkm-api/`](pkm-api/) — composable REST API spike for controlled PKM workflows
 - [`terraform-test/`](terraform-test/) — small Terraform practice configurations
 - [`pi-experiments/`](pi-experiments/) — experiments with Pi extensions
+- [`pi-workbench/`](pi-workbench/) — local Markdown workbench for Pi files
 
 Scratch is the default home for new exploratory work. When an experiment becomes durable, either refine it into a canonical example under [`../reference/`](../reference/) or graduate it to a standalone repository.

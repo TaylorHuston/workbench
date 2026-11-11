@@ -1,0 +1,22 @@
+{
+  "name": "pi-workbench",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "build": "vite build",
+    "start": "node server.mjs",
+    "test": "node --test test/*.test.mjs"
+  },
+  "dependencies": {
+    "@codemirror/commands": "^6.11.1",
+    "@codemirror/lang-markdown": "^6.5.2",
+    "@codemirror/state": "^6.7.6",
+    "@codemirror/view": "^6.43.13",
+    "@lezer/markdown": "^1.7.2",
+    "codemirror-live-markdown": "0.5.1-alpha.1"
+  },
+  "devDependencies": {
+    "vite": "^8.3.0"
+  }
+}
