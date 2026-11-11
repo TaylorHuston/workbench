@@ -1,9 +1,52 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
+import { mkdtemp, readFile, rm, stat, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { createTask, readTask, appendTask, updateCurrentState, listOpenTasks } from './store.mjs';
+import { createTask, createTaskWithDay, readTask, appendTask, updateCurrentState, listOpenTasks, openDay, appendDay } from './store.mjs';
+
+test('day read, append, attribution and task-open recording', async () => {
+  const root = await mkdtemp(join(tmpdir(), 'pi-tasks-day-test-'));
+  try {
+    assert.deepEqual(await openDay(root, '2026-11-10'), { date: '2026-11-10', entries: [] });
+    await assert.rejects(stat(join(root, 'days')), { code: 'ENOENT' });
+    const session = { harness: 'pi', id: 'full-session-id' };
+    const when = new Date(2026, 10, 10, 12, 34, 56);
+    const id = '2026-11/2026-11-10-test';
+    const created = await createTaskWithDay(root, id, 'Test', 'Goal', 'Next: test', session, when);
+    assert.equal(created.day.status, 'appended');
+    assert.equal(created.day.entry.type, 'task_open');
+    assert.equal(created.day.entry.task, id);
+    const standalone = await appendDay(root, 'note', 'A standalone note', session, undefined, when);
+    assert.equal('task' in standalone, false);
+    assert.deepEqual((await openDay(root, '2026-11-10')).entries, [created.day.entry, standalone]);
+    await assert.rejects(appendDay(root, 'unknown', 'bad', session), /Invalid day entry type/);
+    await assert.rejects(appendDay(root, 'note', 'bad', session, '../../escape'), /Invalid task ID/);
+    await assert.rejects(openDay(root, '2026-02-30'), /Invalid calendar date/);
+    await assert.rejects(openDay(root, '../outside'), /Invalid day/);
+    await writeFile(join(root, 'days', '2026-11-09.jsonl'), '{broken');
+    await assert.rejects(openDay(root, '2026-11-09'), /Invalid day log entry at line 1/);
+  } finally { await rm(root, { recursive: true, force: true }); }
+});
+
+test('task creation reports uncertain day write without recreating task', async () => {
+  const root = await mkdtemp(join(tmpdir(), 'pi-tasks-partial-test-'));
+  try {
+    await writeFile(join(root, 'days'), 'blocks day directory');
+    const id = '2026-11/2026-11-10-partial';
+    const result = await createTaskWithDay(root, id, 'Partial', 'Goal', 'Next', { harness: 'pi', id: 'session' }, new Date(2026, 10, 10, 12));
+    assert.equal(result.day.status, 'uncertain');
+    assert.equal(result.day.date, '2026-11-10');
+    assert.equal(result.day.intendedEntry.task, id);
+    assert.equal(result.day.intendedEntry.session.id, 'session');
+    assert.match(result.day.message, /do not recreate.*retry blindly/);
+    assert.equal((await readTask(root, id)).content, result.task.content);
+    await assert.rejects(createTaskWithDay(root, id, 'Partial', 'Goal', 'Next', { harness: 'pi', id: 'session' }), { code: 'EEXIST' });
+    const absent = '2026-11/2026-11-10-no-session';
+    await assert.rejects(createTaskWithDay(root, absent, 'No session', 'Goal', 'Next', undefined), /attribution/);
+    await assert.rejects(stat(join(root, 'tasks', `${absent}.md`)), { code: 'ENOENT' });
+  } finally { await rm(root, { recursive: true, force: true }); }
+});
 
 test('task create, list, attributed append, guarded state update and preservation', async () => {
   const root = await mkdtemp(join(tmpdir(), 'pi-tasks-test-'));

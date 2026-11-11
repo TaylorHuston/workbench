@@ -4,6 +4,60 @@ import { realpathSync } from 'node:fs';
 
 const types = new Set(['note', 'attempt', 'decision', 'blocker', 'evidence', 'checkpoint', 'resume', 'handoff', 'correction']);
 const statuses = new Set(['active', 'blocked', 'done', 'dropped']);
+const dayTypes = new Set(['task_open', 'task_reopen', 'task_close', 'decision', 'outcome', 'blocker', 'note']);
+
+function localTimestamp(timestamp = new Date()) {
+  if (!(timestamp instanceof Date) || Number.isNaN(timestamp.getTime())) throw new Error('Invalid timestamp');
+  const offset = -timestamp.getTimezoneOffset();
+  const sign = offset >= 0 ? '+' : '-';
+  const pad = n => String(n).padStart(2, '0');
+  return `${timestamp.getFullYear()}-${pad(timestamp.getMonth()+1)}-${pad(timestamp.getDate())}T${pad(timestamp.getHours())}:${pad(timestamp.getMinutes())}:${pad(timestamp.getSeconds())}${sign}${pad(Math.floor(Math.abs(offset)/60))}:${pad(Math.abs(offset)%60)}`;
+}
+function validateSession(session) {
+  if (!session || typeof session.harness !== 'string' || !session.harness.trim() || typeof session.id !== 'string' || !session.id.trim()) throw new Error('Full session attribution is required');
+}
+function dayPath(root, date) {
+  root = rootPath(root);
+  if (typeof date !== 'string' || !/^\d{4}-\d{2}-\d{2}$/.test(date)) throw new Error('Invalid day: expected YYYY-MM-DD');
+  const d = new Date(`${date}T00:00:00Z`);
+  if (Number.isNaN(d.getTime()) || d.toISOString().slice(0, 10) !== date) throw new Error('Invalid calendar date');
+  return join(root, 'days', `${date}.jsonl`);
+}
+function parseLog(log, label) {
+  return log.split('\n').map((line, i) => {
+    if (!line.trim()) return null;
+    try { return JSON.parse(line); } catch { throw new Error(`Invalid ${label} log entry at line ${i + 1}`); }
+  }).filter(x => x !== null);
+}
+export async function openDay(root, date = localTimestamp().slice(0, 10)) {
+  const file = dayPath(root, date);
+  let log;
+  try { log = await readFile(file, 'utf8'); } catch (e) { if (e.code !== 'ENOENT') throw e; return { date, entries: [] }; }
+  return { date, entries: parseLog(log, 'day') };
+}
+export async function appendDay(root, type, comment, session, task, timestamp = new Date()) {
+  if (!dayTypes.has(type)) throw new Error('Invalid day entry type');
+  comment = nonempty(comment, 'comment');
+  validateSession(session);
+  if (task !== undefined) taskPath(root, task);
+  const ts = localTimestamp(timestamp);
+  const file = dayPath(root, ts.slice(0, 10));
+  const entry = { ts, session, type, ...(task !== undefined ? { task } : {}), comment };
+  await mkdir(join(rootPath(root), 'days'), { recursive: true });
+  await appendFile(file, JSON.stringify(entry) + '\n', { encoding: 'utf8', mode: 0o600 });
+  return entry;
+}
+export async function createTaskWithDay(root, id, title, description, currentState, session, timestamp = new Date()) {
+  validateSession(session);
+  const ts = localTimestamp(timestamp);
+  const task = await createTask(root, id, title, description, currentState);
+  try {
+    const dayEntry = await appendDay(root, 'task_open', `Started: ${title.trim()}`, session, id, timestamp);
+    return { task, day: { status: 'appended', entry: dayEntry } };
+  } catch (error) {
+    return { task, day: { status: 'uncertain', date: ts.slice(0, 10), intendedEntry: { ts, session, type: 'task_open', task: id, comment: `Started: ${title.trim()}` }, message: 'Task created, but day append failed or has an unknown outcome. Inspect the day log before manually appending; do not recreate the task or retry blindly.', error: error instanceof Error ? error.message : String(error) } };
+  }
+}
 
 function rootPath(root) {
   if (!root || !isAbsolute(root)) throw new Error('PI_TASKS_ROOT must be an explicit absolute path to an isolated experimental store');
@@ -42,21 +96,16 @@ export async function readTask(root, id) {
   const content = await readFile(`${base}.md`, 'utf8');
   let log;
   try { log = await readFile(`${base}.jsonl`, 'utf8'); } catch (e) { if (e.code !== 'ENOENT') throw e; log = ''; }
-  const entries = log.split('\n').filter(Boolean).map((line, i) => { try { return JSON.parse(line); } catch { throw new Error(`Invalid task log entry at line ${i + 1}`); } });
+  const entries = parseLog(log, 'task');
   return { id, content, entries };
 }
 export async function appendTask(root, id, type, comment, session, timestamp = new Date()) {
   const base = taskPath(root, id);
   if (!types.has(type)) throw new Error('Invalid entry type');
   comment = nonempty(comment, 'comment');
-  if (!session || !session.harness || !session.id) throw new Error('Full session attribution is required');
+  validateSession(session);
   await stat(`${base}.md`);
-  // Include the local UTC offset, rather than relying on UTC midnight for local records.
-  const offset = -timestamp.getTimezoneOffset();
-  const sign = offset >= 0 ? '+' : '-';
-  const pad = n => String(n).padStart(2, '0');
-  const local = `${timestamp.getFullYear()}-${pad(timestamp.getMonth()+1)}-${pad(timestamp.getDate())}T${pad(timestamp.getHours())}:${pad(timestamp.getMinutes())}:${pad(timestamp.getSeconds())}${sign}${pad(Math.floor(Math.abs(offset)/60))}:${pad(Math.abs(offset)%60)}`;
-  const entry = { ts: local, session, type, comment };
+  const entry = { ts: localTimestamp(timestamp), session, type, comment };
   await appendFile(`${base}.jsonl`, JSON.stringify(entry) + '\n', { encoding: 'utf8', mode: 0o600 });
   return entry;
 }
