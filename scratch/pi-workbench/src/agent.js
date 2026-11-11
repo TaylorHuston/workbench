@@ -23,8 +23,10 @@ function controls() {
     else button.removeAttribute('aria-current');
   });
   $('#agent-send').disabled = !open || running || !state.model; $('#agent-message').disabled = !open || running || !state.model;
-  $('#agent-stop').disabled = !running;
-  $('#agent-model').textContent = open ? `${state.model ?? 'No model available'} · ${state.cwd} · Tools: ${state.tools.length ? state.tools.join(', ') : 'none'}` : 'No session open';
+  $('#agent-stop').disabled = !running; $('#agent-stop').hidden = !running; $('#agent-send').hidden = running;
+  $('#session-runtime').hidden = !open;
+  $('#agent-model').textContent = open ? state.model ?? 'No model available' : '';
+  $('#agent-model').title = open ? `${state.cwd} · Tools: ${state.tools.length ? state.tools.join(', ') : 'none'}` : '';
 }
 function snapshot(value) {
   state = value; live = null; $('#agent-transcript').replaceChildren();

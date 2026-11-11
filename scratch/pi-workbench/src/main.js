@@ -14,7 +14,8 @@ try { chosenTheme = localStorage.getItem('pi-workbench-theme'); } catch { /* Use
 if (chosenTheme !== 'light' && chosenTheme !== 'dark') chosenTheme = null;
 function applyTheme(theme) {
   document.documentElement.dataset.theme = theme;
-  $('#theme-toggle').setAttribute('aria-pressed', String(theme === 'dark'));
+  const toggle = $('#theme-toggle'), label = `Switch to ${theme === 'dark' ? 'light' : 'dark'} mode`;
+  toggle.setAttribute('aria-pressed', String(theme === 'dark')); toggle.setAttribute('aria-label', label); toggle.title = label;
 }
 applyTheme(chosenTheme ?? (themePreference.matches ? 'dark' : 'light'));
 themePreference.addEventListener('change', (event) => { if (!chosenTheme) applyTheme(event.matches ? 'dark' : 'light'); });
@@ -79,7 +80,7 @@ async function openFile(path, button) {
     updateStatus('Opening…'); const file = await api(`/api/file?path=${encodeURIComponent(path)}`);
     if (view && view.state.doc.toString() !== before) { updateStatus('Editor changed while opening; try again.'); return; }
     view?.destroy(); current = path; original = normalize(file.content); version = file.version; ending = file.lineEnding;
-    $('#empty').hidden = true; $('#document').hidden = false; $('#filename').textContent = path.split('/').at(-1); $('#document-path').textContent = `~/.pi/${path}`; $('#path').textContent = ` / ${path}`;
+    $('#empty').hidden = true; $('#document').hidden = false; $('#filename').textContent = path.split('/').at(-1); $('#document-path').textContent = `~/.pi/${path}`;
     document.querySelectorAll('.file.active').forEach((node) => node.classList.remove('active')); button.classList.add('active'); select(path, 'file');
     view = new EditorView({ parent: $('#editor'), state: EditorState.create({ doc: original, extensions: [history(), keymap.of([...defaultKeymap, ...historyKeymap]), markdown({ extensions: [GFM] }), EditorView.lineWrapping, EditorView.contentAttributes.of({ 'aria-label': 'Markdown source editor' }), placeholder('Start writing…'), mouseSelectingField, livePreviewPlugin, markdownStylePlugin, editorTheme, EditorView.updateListener.of((update) => { if (update.docChanged) updateStatus(); })] }) });
     updateStatus();
@@ -117,11 +118,11 @@ async function manage(action, kind) {
     const result = await api('/api/entry', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload) });
     if (action === 'rename' && affectsEditor) {
       current = result.path + current.slice(target.path.length);
-      $('#filename').textContent = current.split('/').at(-1); $('#document-path').textContent = `~/.pi/${current}`; $('#path').textContent = ` / ${current}`;
+      $('#filename').textContent = current.split('/').at(-1); $('#document-path').textContent = `~/.pi/${current}`;
     }
     if (action === 'trash' && affectsEditor) {
       view?.destroy(); view = undefined; current = undefined; original = ''; version = undefined;
-      $('#document').hidden = true; $('#empty').hidden = false; $('#path').textContent = ' / No file selected'; updateStatus();
+      $('#document').hidden = true; $('#empty').hidden = false; updateStatus();
     }
     managing = false;
     select(action === 'rename' ? result.path : parent, action === 'rename' ? target.kind : 'directory');

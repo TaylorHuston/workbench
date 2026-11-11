@@ -20,7 +20,7 @@ npm start
 
 Open http://127.0.0.1:4175. The server binds only to loopback. `PORT` selects another port. To test on disposable files instead of real configuration, set `PI_WORKBENCH_ROOT` to an existing directory before starting. Use `npm test` for isolated filesystem and HTTP checks.
 
-Choose a file, edit, and click **Save changes** or press Cmd/Ctrl+S. Changing files or leaving with unsaved changes prompts for confirmation. A save refuses to overwrite a file whose content changed since it was opened; copy your edits before reopening it. The appearance follows the system light/dark setting until you use **Dark mode**; your choice is saved in the browser.
+Choose a file, edit, and click **Save changes** in the sidebar or press Cmd/Ctrl+S. Changing files or leaving with unsaved changes prompts for confirmation. A save refuses to overwrite a file whose content changed since it was opened; copy your edits before reopening it. The appearance follows the system light/dark setting until you use the sidebar theme icon; your choice is saved in the browser.
 
 Select the root, a folder, or a file in the tree to choose where actions apply. **New file** and **New folder** create inside the selected folder (or beside the selected file). New file names must end in `.md`. **Rename** changes the selected item's name without replacing an existing item. **Trash** asks for confirmation and uses macOS Trash; only empty folders can be trashed. Save or discard the open document before renaming or trashing it or an ancestor folder. macOS's `/usr/bin/trash` and `osascript` are required for trash and rename respectively.
 
