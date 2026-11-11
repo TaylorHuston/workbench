@@ -162,7 +162,8 @@ export function createServerFor(workbench, agent, { createWorkspace = createWork
         if (req.headers.origin !== `http://${expectedHost}` || !req.headers['content-type']?.startsWith('application/json')) return json(res, 403, { error: 'Origin not allowed' });
         req.setEncoding('utf8');
         let data = ''; for await (const chunk of req) { data += chunk; if (data.length > 10_000_000) return json(res, 413, { error: 'File too large' }); }
-        const { path, content, version, action, parent, name, kind, key, message, archived, cwd, changes, revision, workspace: workspacePath } = JSON.parse(data);
+        const { path, content, version, action, parent, name, kind, key, message, archived, cwd, changes, revision, id, value, workspace: workspacePath } = JSON.parse(data);
+        if (url.pathname === '/api/agent/dialog') { agent.respondDialog(id, value); return json(res, 200, { ok: true }); }
         if (url.pathname === '/api/agent/workspaces') {
           if (typeof cwd !== 'string' || !isAbsolute(cwd)) throw new Error('Enter an absolute working directory');
           if (action === 'update') {

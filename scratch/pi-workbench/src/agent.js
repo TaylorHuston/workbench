@@ -1,4 +1,5 @@
 import { getWorkspace, refreshWorkspaces, showWorkspaceError } from './workspace.js';
+import { extensionDialogEvent, extensionDialogsDisconnected } from './extension-dialogs.js';
 
 const $ = (selector) => document.querySelector(selector);
 let state = null, live = null, lastError = '', draftSessionId = null;
@@ -59,8 +60,10 @@ events.onmessage = ({ data }) => {
   else if (event.type === 'archives_changed' && sessionsLoaded) applyArchiveChange(event.key, event.archived);
   else if (event.type === 'sessions_changed' && sessionsLoaded) { sessionVersion++; void loadSessions(); }
   else if (event.type === 'workspaces_changed') void refreshWorkspaces();
+  else if (event.type === 'extension_dialog' || event.type === 'extension_dialog_closed') extensionDialogEvent(event);
+  else if (event.type === 'extension_notice') status(event.message);
 };
-events.onerror = () => status('Disconnected; reconnecting…');
+events.onerror = () => { extensionDialogsDisconnected(); status('Disconnected; reconnecting…'); };
 events.onopen = () => { lastError = ''; snapshot(state); void refreshWorkspaces(); if (sessionsLoaded) void loadSessions(); };
 
 async function action(fn) { try { lastError = ''; await fn(); } catch (error) { lastError = error.message; status(lastError); } }

@@ -125,6 +125,17 @@ test('HTTP lists, names and archives workspaces and creates a session', async (t
   assert.deepEqual(calls, [['workspace', cwd, 'Fixture'], ['update', cwd, { archived: true }, workspace.revision], ['session', cwd]]);
 });
 
+test('HTTP accepts dialog replies during session startup and rejects cross-origin replies', async (t) => {
+  const { store } = await fixture(t); const calls = [];
+  const agent = { respondDialog: (id, value) => { calls.push([id, value]); } };
+  const server = createServerFor(store, agent);
+  await new Promise((resolve) => server.listen(0, '127.0.0.1', resolve)); t.after(() => new Promise((resolve) => server.close(resolve)));
+  const url = `http://127.0.0.1:${server.address().port}`;
+  const post = (origin) => fetch(`${url}/api/agent/dialog`, { method: 'POST', headers: { origin, 'content-type': 'application/json' }, body: JSON.stringify({ id: 'request', value: true }) });
+  assert.equal((await post('https://attacker.example')).status, 403); assert.deepEqual(calls, []);
+  assert.equal((await post(url)).status, 200); assert.deepEqual(calls, [['request', true]]);
+});
+
 test('HTTP reload targets only the open session', async (t) => {
   const { store } = await fixture(t); const calls = [];
   const agent = { snapshot: () => ({ key: 'current' }), reload: async (key) => { calls.push(key); return { key, reloading: false }; } };

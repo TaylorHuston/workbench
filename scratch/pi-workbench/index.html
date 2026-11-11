@@ -38,6 +38,16 @@
       </section>
     </main>
   </div>
+  <dialog id="extension-dialog" class="extension-dialog" aria-labelledby="extension-dialog-title" aria-describedby="extension-dialog-message">
+    <form id="extension-dialog-form">
+      <p class="extension-dialog-label">Extension request</p><h2 id="extension-dialog-title"></h2><p id="extension-dialog-message"></p>
+      <label id="extension-dialog-field-label" for="extension-dialog-field" hidden>Response</label><input id="extension-dialog-field" type="text" autocomplete="off" hidden>
+      <label id="extension-dialog-choice-label" for="extension-dialog-choice" hidden>Choose an option</label><select id="extension-dialog-choice" hidden></select>
+      <label id="extension-dialog-editor-label" for="extension-dialog-editor" hidden>Response</label><textarea id="extension-dialog-editor" rows="8" hidden></textarea>
+      <p id="extension-dialog-status" role="status" aria-live="polite"></p>
+      <div class="extension-dialog-actions"><button id="extension-dialog-cancel" type="button">Cancel</button><button id="extension-dialog-submit" type="submit">Continue</button></div>
+    </form>
+  </dialog>
   <script type="module" src="/src/main.js"></script>
 </body>
 </html>

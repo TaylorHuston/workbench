@@ -195,6 +195,101 @@ test('includes sessions made by the previous Workbench spike', async (t) => {
   const opened = await host.open(sessions[0].key); assert.equal(opened.id, sessions[0].id); await host.close();
 });
 
+test('loads global extensions, skips project extensions, and emits shutdown', async (t) => {
+  const { cwd, agentDir, options, faux, modelRuntime } = await setup(t);
+  options.makeSession = ({ cwd: path, loader, settings, manager }) => createAgentSession({ cwd: path, agentDir, resourceLoader: loader, settingsManager: settings, sessionManager: manager, modelRuntime, model: faux.getModel() });
+  const globalDir = join(agentDir, 'extensions'), projectDir = join(cwd, '.pi', 'extensions');
+  await mkdir(globalDir, { recursive: true }); await mkdir(projectDir, { recursive: true });
+  const lifecycle = join(agentDir, 'lifecycle.txt'), projectMarker = join(agentDir, 'project-ran');
+  await writeFile(join(globalDir, 'global.js'), `import { appendFile } from 'node:fs/promises';\nexport default function(pi) {\n pi.on('session_start', async () => appendFile(${JSON.stringify(lifecycle)}, 'start\\n'));\n pi.on('session_shutdown', async () => appendFile(${JSON.stringify(lifecycle)}, 'stop\\n'));\n pi.registerTool({ name: 'global_fixture', label: 'Global fixture', description: 'Fixture tool', parameters: { type: 'object', properties: {} }, execute: async () => ({ content: [{ type: 'text', text: 'global result' }], details: {} }) });\n}`);
+  await writeFile(join(projectDir, 'project.js'), `import { writeFileSync } from 'node:fs'; writeFileSync(${JSON.stringify(projectMarker)}, 'executed'); export default function() {}`);
+  new ProjectTrustStore(agentDir).set(cwd, true);
+  const host = createAgentHost(options); const opened = await host.createSession(cwd);
+  assert.match(opened.warning, /Global extensions are active/); assert.ok(opened.tools.includes('global_fixture'));
+  await assert.rejects(stat(projectMarker), { code: 'ENOENT' });
+  faux.setResponses([fauxAssistantMessage([fauxToolCall('global_fixture', {})]), fauxAssistantMessage('Fixture complete.')]);
+  const events = await run(host, 'Use the fixture'); assert.ok(events.some((event) => event.type === 'tool' && event.name === 'global_fixture'));
+  await host.reload(opened.key);
+  await host.close(); assert.equal(await readFile(lifecycle, 'utf8'), 'start\nstop\nstart\nstop\n');
+});
+
+test('shuts down the previous extension runtime before starting another', async (t) => {
+  const { cwd, agentDir, options } = await setup(t); const dir = join(agentDir, 'extensions'); await mkdir(dir, { recursive: true });
+  const lifecycle = join(agentDir, 'lifecycle.txt');
+  await writeFile(join(dir, 'fixture.js'), `import { appendFile } from 'node:fs/promises'; export default function(pi) { pi.on('session_start', async () => appendFile(${JSON.stringify(lifecycle)}, 'start\\n')); pi.on('session_shutdown', async () => appendFile(${JSON.stringify(lifecycle)}, 'stop\\n')); }`);
+  const host = createAgentHost(options); await host.createSession(cwd); await host.createSession(cwd); await host.close();
+  assert.equal(await readFile(lifecycle, 'utf8'), 'start\nstop\nstart\nstop\n');
+});
+
+test('skips disabled global extensions and refuses a stale extension selection on reload', async (t) => {
+  const { cwd, agentDir, options } = await setup(t); const globalDir = join(agentDir, 'extensions'); await mkdir(globalDir, { recursive: true });
+  const file = join(globalDir, 'disabled.js'), marker = join(agentDir, 'disabled-ran');
+  await writeFile(file, `import { writeFileSync } from 'node:fs'; writeFileSync(${JSON.stringify(marker)}, 'executed'); export default function() {}`);
+  let disabled = true; options.settingsFactory = () => SettingsManager.inMemory({ extensions: disabled ? [`-${file}`] : [] });
+  const host = createAgentHost(options); const opened = await host.createSession(cwd);
+  await assert.rejects(stat(marker), { code: 'ENOENT' });
+  disabled = false; await assert.rejects(host.reload(opened.key), /selection changed/);
+  await assert.rejects(stat(marker), { code: 'ENOENT' }); await host.close();
+});
+
+test('declines extension confirmations when no browser is connected', async (t) => {
+  const { cwd, agentDir, options } = await setup(t); const dir = join(agentDir, 'extensions'); await mkdir(dir, { recursive: true });
+  const marker = join(agentDir, 'ui.txt');
+  await writeFile(join(dir, 'fixture.js'), `import { writeFile } from 'node:fs/promises'; export default function(pi) { pi.on('session_start', async (_event, ctx) => writeFile(${JSON.stringify(marker)}, String(ctx.hasUI) + ':' + String(await ctx.ui.confirm('Fixture', 'Approve?')))); }`);
+  const host = createAgentHost(options); await host.createSession(cwd);
+  assert.equal(await readFile(marker, 'utf8'), 'true:false'); await host.close();
+});
+
+test('delivers and resolves a dialog while an extension is starting', async (t) => {
+  const { cwd, agentDir, options } = await setup(t); const dir = join(agentDir, 'extensions'); await mkdir(dir, { recursive: true });
+  const marker = join(agentDir, 'answer.txt');
+  await writeFile(join(dir, 'fixture.js'), `import { writeFile } from 'node:fs/promises'; export default function(pi) { pi.on('session_start', async (_event, ctx) => writeFile(${JSON.stringify(marker)}, String(await ctx.ui.confirm('Allow?', 'Fixture action')))); }`);
+  const host = createAgentHost(options); let resolveDialog; const dialog = new Promise((resolve) => { resolveDialog = resolve; });
+  const unsubscribe = host.subscribe((event) => { if (event.type === 'extension_dialog') resolveDialog(event.dialog); });
+  const opening = host.createSession(cwd); const request = await dialog;
+  assert.equal(request.kind, 'confirm'); assert.equal(request.message, 'Fixture action');
+  host.respondDialog(request.id, true); await opening; assert.equal(await readFile(marker, 'utf8'), 'true');
+  unsubscribe(); await host.close();
+});
+
+test('cancels a startup confirmation when its last viewer disconnects', async (t) => {
+  const { cwd, agentDir, options } = await setup(t); const dir = join(agentDir, 'extensions'); await mkdir(dir, { recursive: true });
+  const marker = join(agentDir, 'answer.txt');
+  await writeFile(join(dir, 'fixture.js'), `import { writeFile } from 'node:fs/promises'; export default function(pi) { pi.on('session_start', async (_event, ctx) => writeFile(${JSON.stringify(marker)}, String(await ctx.ui.confirm('Allow?', 'Fixture action')))); }`);
+  const host = createAgentHost(options); let resolveDialog; const dialog = new Promise((resolve) => { resolveDialog = resolve; });
+  const unsubscribe = host.subscribe((event) => { if (event.type === 'extension_dialog') resolveDialog(event.dialog); });
+  const opening = host.createSession(cwd); const request = await dialog; unsubscribe(); await opening;
+  assert.equal(await readFile(marker, 'utf8'), 'false'); assert.throws(() => host.respondDialog(request.id, true), /no longer pending/); await host.close();
+});
+
+test('stopping a run cancels its pending confirmation without running the tool', async (t) => {
+  const { cwd, agentDir, options, faux, getCalls } = await setup(t); const dir = join(agentDir, 'extensions'); await mkdir(dir, { recursive: true });
+  await writeFile(join(dir, 'fixture.js'), `export default function(pi) { pi.on('tool_call', async (_event,ctx) => { if (!(await ctx.ui.confirm('Run tool?', 'Fixture'))) return { block: true }; }); }`);
+  const host = createAgentHost(options); let resolveDialog; const dialog = new Promise((resolve) => { resolveDialog = resolve; });
+  const unsubscribe = host.subscribe((event) => { if (event.type === 'extension_dialog') resolveDialog(event.dialog); });
+  await host.createSession(cwd); faux.setResponses([fauxAssistantMessage([fauxToolCall('fixture_echo', { text: 'fixture' })])]);
+  host.send('Run the fixture'); const request = await dialog; await host.stop();
+  assert.equal(getCalls(), 0); assert.throws(() => host.respondDialog(request.id, true), /no longer pending/);
+  unsubscribe(); await host.close();
+});
+
+test('blocks further prompts after a global extension fails during reload', async (t) => {
+  const { cwd, agentDir, options } = await setup(t); const dir = join(agentDir, 'extensions'); await mkdir(dir, { recursive: true });
+  const file = join(dir, 'fixture.js'); await writeFile(file, 'export default function() {}');
+  const host = createAgentHost(options); const opened = await host.createSession(cwd);
+  await writeFile(file, 'export default function( {');
+  await assert.rejects(host.reload(opened.key), /partially reloaded/);
+  assert.throws(() => host.send('must not run'), /close and reopen/); await host.close();
+});
+
+test('does not install missing global extension packages', async (t) => {
+  const { cwd, options } = await setup(t); options.settingsFactory = () => SettingsManager.inMemory({ packages: ['npm:@fixture/never-install-global@1.0.0'] });
+  const original = DefaultPackageManager.prototype.installParsedSource, offline = process.env.PI_OFFLINE; let attempts = 0;
+  DefaultPackageManager.prototype.installParsedSource = async () => { attempts++; throw new Error('Unexpected installation'); }; delete process.env.PI_OFFLINE;
+  try { const host = createAgentHost(options); const opened = await host.createSession(cwd); assert.equal(attempts, 0); assert.match(opened.warning, /uninstalled global Pi package/); await host.close(); }
+  finally { DefaultPackageManager.prototype.installParsedSource = original; if (offline === undefined) delete process.env.PI_OFFLINE; else process.env.PI_OFFLINE = offline; }
+});
+
 test('discovers user and trusted project skills without enabling extensions or project runtime settings', async (t) => {
   const { cwd, agentDir, modelRuntime, faux, options, seed } = await setup(t); await seed();
   async function skill(base, name, body, extra = '') {

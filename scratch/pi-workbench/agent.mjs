@@ -4,6 +4,7 @@ import { createHash, randomUUID } from 'node:crypto';
 import { createAgentSession, createSyntheticSourceInfo, DefaultPackageManager, DefaultResourceLoader, getAgentDir, hasTrustRequiringProjectResources, loadSkills, ProjectTrustStore, SessionManager, SettingsManager } from '@earendil-works/pi-coding-agent';
 import { createArchiveStore } from './archive.mjs';
 import { createWorkspaceStore } from './workspaces.mjs';
+import { createExtensionDialogs } from './extension-ui.mjs';
 
 // Opens saved sessions in a new SDK runtime; it cannot attach to a running CLI process.
 export function createAgentHost({ agentDir = getAgentDir(), stateDir = join(agentDir, 'pi-workbench'), makeSession, settingsFactory } = {}) {
@@ -12,7 +13,8 @@ export function createAgentHost({ agentDir = getAgentDir(), stateDir = join(agen
   let active, busy = false, opening = false, partial = '', runPromise;
   let knownSessions = new Map();
   const listeners = new Set();
-  const publish = (event) => { for (const listener of listeners) { try { listener(event); } catch { listeners.delete(listener); } } };
+  const publish = (event) => { for (const listener of listeners) { try { listener(event); } catch { listeners.delete(listener); } } if (!listeners.size) dialogs.cancelAll(); };
+  const dialogs = createExtensionDialogs({ publish, hasViewers: () => listeners.size > 0 });
   const text = (content) => typeof content === 'string' ? content : Array.isArray(content) ? content.filter((block) => block.type === 'text').map((block) => block.text).join('') : '';
   const project = (message) => {
     if (message.role !== 'user' && message.role !== 'assistant') return null;
@@ -56,6 +58,13 @@ export function createAgentHost({ agentDir = getAgentDir(), stateDir = join(agen
     if (missing.length) warnings.push(`${missing.length} uninstalled Pi package(s) skipped.`);
     if (result.diagnostics.length) warnings.push(`${result.diagnostics.length} skill discovery warning(s).`);
     return { result, warnings };
+  }
+  async function discoverGlobalExtensions(cwd, settings) {
+    const globalSettings = SettingsManager.inMemory({ ...settings.getGlobalSettings() }, { projectTrusted: false });
+    const manager = new DefaultPackageManager({ cwd, agentDir, settingsManager: globalSettings });
+    const missing = [];
+    const paths = await manager.resolve(async (source) => { missing.push(source); return 'skip'; });
+    return { paths: paths.extensions.filter((entry) => entry.enabled && entry.metadata.scope === 'user').map((entry) => entry.path), missing };
   }
   async function discover() {
     const nativeRoot = join(agentDir, 'sessions');
@@ -105,10 +114,12 @@ export function createAgentHost({ agentDir = getAgentDir(), stateDir = join(agen
   async function closeActive() {
     if (!active) return;
     if (busy) throw new Error('Stop the current run before switching sessions');
-    const old = active; active = undefined; partial = '';
-    old.unsubscribe(); old.session.dispose();
-    await release(old.lock); publish({ type: 'snapshot', value: null });
+    const old = active; active = undefined; partial = ''; dialogs.cancelAll();
+    old.unsubscribe(); const errorsBefore = old.extensionErrors.length;
+    try { await old.session.extensionRunner.emit({ type: 'session_shutdown', reason: 'quit' }); }
+    finally { old.session.dispose(); await release(old.lock); publish({ type: 'snapshot', value: null }); }
     if (old.createdHere) publish({ type: 'sessions_changed' });
+    if (old.extensionErrors.length > errorsBefore) throw new Error(`Extension shutdown failed; inspect any external processes before retrying. ${old.extensionErrors.slice(errorsBefore).join('; ')}`);
   }
   async function close() {
     if (opening) throw new Error('Wait for the session to finish opening');
@@ -140,15 +151,28 @@ export function createAgentHost({ agentDir = getAgentDir(), stateDir = join(agen
       }
       const settings = settingsFactory ? settingsFactory(path, agentDir) : SettingsManager.create(path, agentDir, { projectTrusted: false });
       const { result: discoveredSkills, warnings: skillWarnings } = await discoverSkills(path, settings);
+      const globalExtensions = await discoverGlobalExtensions(path, settings);
       const skills = { current: discoveredSkills };
-      // Keep project settings out of the runtime; only the skill resolver observes trusted project settings.
-      // The base loader has no packages so its reload cannot install missing packages as a side effect.
-      const loaderSettings = SettingsManager.inMemory({ ...settings.getGlobalSettings(), packages: [] }, { projectTrusted: false });
-      const loader = new DefaultResourceLoader({ cwd: path, agentDir, settingsManager: loaderSettings, noExtensions: true, noSkills: true, noPromptTemplates: true, noThemes: true, skillsOverride: () => skills.current });
+      // Resolve only installed global paths above; the loader cannot install packages or autoload project extensions.
+      const loaderSettings = SettingsManager.inMemory({ ...settings.getGlobalSettings(), packages: [], extensions: [] }, { projectTrusted: false });
+      const loader = new DefaultResourceLoader({ cwd: path, agentDir, settingsManager: loaderSettings, noExtensions: true, additionalExtensionPaths: globalExtensions.paths, noSkills: true, noPromptTemplates: true, noThemes: true, skillsOverride: () => skills.current });
+      // Loading extension modules can itself have side effects; do not overlap two extension runtimes.
+      if (active && (active.extensionCount || globalExtensions.paths.length)) await closeActive();
       await loader.reload();
+      const extensionResult = loader.getExtensions();
+      if (extensionResult.errors.length) throw new Error(`Global extension loading failed: ${extensionResult.errors.map((entry) => `${entry.path}: ${entry.error}`).join('; ')}`);
       const result = makeSession ? await makeSession({ cwd: path, agentDir, settings, loader, manager }) : await createAgentSession({ cwd: path, agentDir, settingsManager: settings, resourceLoader: loader, sessionManager: manager });
       session = result.session;
-      await session.bindExtensions({ mode: 'json' });
+      const extensionErrors = [], boundSession = session;
+      await session.bindExtensions({ mode: 'rpc', uiContext: dialogs.context(session.extensionRunner.getUIContext()), onError: (error) => {
+        const message = `Extension error (${error.event}): ${error.error}`; extensionErrors.push(message);
+        if (active?.session === boundSession) {
+          const first = !active.unsafe; active.unsafe = true; active.warning = `${message} Close and reopen the session before continuing.`;
+          publish({ type: 'error', message: active.warning });
+          if (first && busy) void boundSession.abort().catch(() => {});
+        }
+      } });
+      if (extensionErrors.length) throw new Error(`Global extension startup failed: ${extensionErrors.join('; ')}`);
       await closeActive();
       const unsubscribe = session.subscribe((event) => {
         if (event.type === 'message_update' && event.assistantMessageEvent.type === 'text_delta') { partial += event.assistantMessageEvent.delta; publish({ type: 'delta', text: event.assistantMessageEvent.delta }); }
@@ -164,12 +188,15 @@ export function createAgentHost({ agentDir = getAgentDir(), stateDir = join(agen
         if (event.type === 'tool_execution_start') publish({ type: 'tool', name: event.toolName, phase: 'start' });
         if (event.type === 'tool_execution_end') publish({ type: 'tool', name: event.toolName, phase: 'end', isError: event.isError });
       });
-      active = { cwd: path, key, session, lock, unsubscribe, skills, createdHere, sessionPath: manager.getSessionFile(), createdAt: new Date().toISOString(), modelWarning: result.modelFallbackMessage || null, warning: [result.modelFallbackMessage, ...skillWarnings].filter(Boolean).join(' ') || null }; lock = undefined; session = undefined;
+      const extensionWarning = extensionResult.extensions.length ? 'Global extensions are active. Basic dialogs are supported; custom terminal UI is not.' : null;
+      const missingWarning = globalExtensions.missing.length ? `${globalExtensions.missing.length} uninstalled global Pi package(s) skipped.` : null;
+      active = { cwd: path, key, session, lock, unsubscribe, skills, loader, extensionPaths: globalExtensions.paths, extensionErrors, extensionCount: extensionResult.extensions.length, extensionWarning, missingWarning, unsafe: false, createdHere, sessionPath: manager.getSessionFile(), createdAt: new Date().toISOString(), modelWarning: result.modelFallbackMessage || null, warning: [result.modelFallbackMessage, ...skillWarnings, extensionWarning, missingWarning].filter(Boolean).join(' ') || null }; lock = undefined; session = undefined;
       opening = false; publish({ type: 'snapshot', value: snapshot() });
       if (createdHere) publish({ type: 'sessions_changed' });
       return snapshot();
     } catch (error) {
-      session?.dispose(); if (lock) await release(lock).catch(() => {}); throw error;
+      if (session) { try { await session.extensionRunner.emit({ type: 'session_shutdown', reason: 'quit' }); } catch { /* Preserve the original startup error. */ } finally { session.dispose(); } }
+      if (lock) await release(lock).catch(() => {}); throw error;
     } finally { opening = false; }
   }
   async function reload(key) {
@@ -177,15 +204,23 @@ export function createAgentHost({ agentDir = getAgentDir(), stateDir = join(agen
     if (opening) throw new Error('Wait for the session to finish opening or reloading');
     if (busy) throw new Error('Stop the current run before reloading');
     const current = active; opening = true; publish({ type: 'snapshot', value: snapshot() });
-    let failure;
+    let failure, reloadingRuntime = false;
     try {
       const settings = settingsFactory ? settingsFactory(current.cwd, agentDir) : SettingsManager.create(current.cwd, agentDir, { projectTrusted: false });
       const { result: skills, warnings } = await discoverSkills(current.cwd, settings);
+      const globalExtensions = await discoverGlobalExtensions(current.cwd, settings);
+      if (JSON.stringify(globalExtensions.paths) !== JSON.stringify(current.extensionPaths)) throw new Error('Global extension selection changed; close and reopen the session to apply it.');
       current.skills.current = skills;
+      const errorsBefore = current.extensionErrors.length; reloadingRuntime = true; dialogs.cancelAll();
       await current.session.reload();
-      current.warning = [current.modelWarning, ...warnings].filter(Boolean).join(' ') || null;
+      const errors = current.loader.getExtensions().errors;
+      if (errors.length || current.extensionErrors.length > errorsBefore) throw new Error('A global extension failed to load or start.');
+      current.unsafe = false;
+      current.warning = [current.modelWarning, ...warnings, current.extensionWarning, current.missingWarning].filter(Boolean).join(' ') || null;
     } catch (error) {
-      failure = new Error(`Session reload failed; the runtime may be partially reloaded. Close and reopen it if needed. ${error.message}`);
+      if (reloadingRuntime) current.unsafe = true;
+      failure = new Error(`Session reload failed${reloadingRuntime ? '; the runtime may be partially reloaded. Close and reopen it before continuing' : ''}. ${error.message}`);
+      current.warning = failure.message;
     } finally {
       opening = false; publish({ type: 'snapshot', value: snapshot() });
     }
@@ -194,6 +229,7 @@ export function createAgentHost({ agentDir = getAgentDir(), stateDir = join(agen
   }
   function send(message) {
     if (!active) throw new Error('Open a session first');
+    if (active.unsafe) throw new Error('Extension failure or incomplete reload; close and reopen the session before continuing');
     if (busy || opening) throw new Error('Agent is already running');
     if (typeof message !== 'string' || !message.trim()) throw new Error('Enter a message');
     busy = true; partial = ''; publish({ type: 'busy', value: true });
@@ -209,8 +245,11 @@ export function createAgentHost({ agentDir = getAgentDir(), stateDir = join(agen
     });
     return { accepted: true };
   }
-  async function stop() { if (active && busy) { await active.session.abort(); await runPromise; } }
-  function subscribe(listener) { listeners.add(listener); listener({ type: 'snapshot', value: snapshot() }); return () => listeners.delete(listener); }
+  async function stop() { const abort = active && busy ? active.session.abort() : undefined; dialogs.cancelAll(); if (abort) { await abort; await runPromise; } }
+  function subscribe(listener) {
+    listeners.add(listener); listener({ type: 'snapshot', value: snapshot() }); dialogs.replay(listener);
+    return () => { listeners.delete(listener); if (!listeners.size) dialogs.cancelAll(); };
+  }
   async function addWorkspace(path, name) { const workspace = await workspaces.add(path, name); publish({ type: 'workspaces_changed' }); return { cwd: workspace.path, workspace }; }
   async function updateWorkspace(path, changes, revision) {
     try {
@@ -218,5 +257,5 @@ export function createAgentHost({ agentDir = getAgentDir(), stateDir = join(agen
     } catch (error) { throw new Error(`Workspace update failed or is uncertain; refresh and inspect before retrying. ${error.message}`); }
   }
   function createSession(cwd) { if (typeof cwd !== 'string') throw new Error('Enter an absolute working directory'); return open(undefined, cwd); }
-  return { list, open, close, reload, send, stop, snapshot, subscribe, setArchived, listWorkspaces: workspaces.list, addWorkspace, updateWorkspace, createSession };
+  return { list, open, close, reload, send, stop, snapshot, subscribe, respondDialog: dialogs.respond, setArchived, listWorkspaces: workspaces.list, addWorkspace, updateWorkspace, createSession };
 }
