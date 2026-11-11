@@ -1,9 +1,49 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdtemp, readFile, rm, stat, writeFile } from 'node:fs/promises';
+import { mkdir, mkdtemp, readFile, rm, stat, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { createTask, createTaskWithDay, readTask, appendTask, updateCurrentState, closeTask, listOpenTasks, openDay, appendDay } from './store.mjs';
+
+test('entry UUIDs are generated and duplicate IDs are refused per log', async () => {
+  const root = await mkdtemp(join(tmpdir(), 'pi-tasks-uuid-test-'));
+  try {
+    const id = '2026-11/2026-11-10-uuid';
+    const session = { harness: 'pi', id: 'session' };
+    const when = new Date(2026, 10, 10, 12);
+    await createTask(root, id, 'UUID', 'Goal', 'Next');
+    const first = await appendTask(root, id, 'note', 'First', session, when);
+    const second = await appendTask(root, id, 'note', 'Second', session, when);
+    assert.match(first.id, /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/);
+    assert.notEqual(first.id, second.id);
+    await assert.rejects(appendTask(root, id, 'note', 'Duplicate', session, when, first.id), /Duplicate entry id/);
+    await assert.rejects(appendTask(root, id, 'note', 'Bad id', session, when, 'not-a-uuid'), /UUID v4/);
+    const day = await appendDay(root, 'note', 'Day', session, undefined, when);
+    await assert.rejects(appendDay(root, 'note', 'Duplicate', session, undefined, when, day.id), /Duplicate entry id/);
+    assert.equal((await readTask(root, id)).entries.length, 2);
+    assert.equal((await openDay(root, '2026-11-10')).entries.length, 1);
+  } finally { await rm(root, { recursive: true, force: true }); }
+});
+
+test('legacy entries remain readable and incomplete or duplicate logs are not appended', async () => {
+  const root = await mkdtemp(join(tmpdir(), 'pi-tasks-legacy-test-'));
+  try {
+    const session = { harness: 'pi', id: 'session' };
+    const when = new Date(2026, 10, 10, 12);
+    await mkdir(join(root, 'days'));
+    const file = join(root, 'days', '2026-11-10.jsonl');
+    const legacy = { ts: '2026-11-10T12:00:00-05:00', session, type: 'note', comment: 'Legacy' };
+    await writeFile(file, JSON.stringify(legacy) + '\n');
+    assert.deepEqual((await openDay(root, '2026-11-10')).entries, [legacy]);
+    const entry = await appendDay(root, 'note', 'New', session, undefined, when);
+    assert.equal((await openDay(root, '2026-11-10')).entries.length, 2);
+    const bytes = await readFile(file, 'utf8');
+    await writeFile(file, bytes + JSON.stringify(entry) + '\n');
+    await assert.rejects(appendDay(root, 'note', 'Blocked', session, undefined, when), /Duplicate entry id/);
+    await writeFile(file, bytes.slice(0, -1));
+    await assert.rejects(appendDay(root, 'note', 'Blocked', session, undefined, when), /missing final newline/);
+  } finally { await rm(root, { recursive: true, force: true }); }
+});
 
 test('day read, append, attribution and task-open recording', async () => {
   const root = await mkdtemp(join(tmpdir(), 'pi-tasks-day-test-'));
@@ -38,6 +78,7 @@ test('task creation reports uncertain day write without recreating task', async 
     assert.equal(result.day.status, 'uncertain');
     assert.equal(result.day.date, '2026-11-10');
     assert.equal(result.day.intendedEntry.task, id);
+    assert.match(result.day.intendedEntry.id, /^[0-9a-f-]{36}$/);
     assert.equal(result.day.intendedEntry.session.id, 'session');
     assert.match(result.day.message, /do not recreate.*retry blindly/);
     assert.equal((await readTask(root, id)).content, result.task.content);
@@ -113,6 +154,7 @@ test('close reports uncertain day append and preserves closed task', async () =>
     assert.equal(result.day.status, 'uncertain');
     assert.equal(result.day.date, '2026-11-10');
     assert.equal(result.day.intendedEntry.type, 'task_close');
+    assert.match(result.day.intendedEntry.id, /^[0-9a-f-]{36}$/);
     assert.equal(result.day.intendedEntry.task, id);
     assert.match(result.day.message, /do not reopen.*retry blindly/);
     assert.equal((await readTask(root, id)).content, result.task.content);

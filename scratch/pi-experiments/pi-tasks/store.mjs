@@ -1,6 +1,7 @@
 import { appendFile, mkdir, open, readFile, readdir, stat } from 'node:fs/promises';
 import { isAbsolute, join } from 'node:path';
 import { realpathSync } from 'node:fs';
+import { randomUUID } from 'node:crypto';
 
 const types = new Set(['note', 'attempt', 'decision', 'blocker', 'evidence', 'checkpoint', 'resume', 'handoff', 'correction']);
 const statuses = new Set(['active', 'blocked', 'done', 'dropped']);
@@ -29,33 +30,53 @@ function parseLog(log, label) {
     try { return JSON.parse(line); } catch { throw new Error(`Invalid ${label} log entry at line ${i + 1}`); }
   }).filter(x => x !== null);
 }
+const uuidPattern = /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/;
+function validateEntryId(id) {
+  if (typeof id !== 'string' || !uuidPattern.test(id)) throw new Error('Entry id must be a lowercase UUID v4');
+}
+async function appendUnique(file, entry, label) {
+  validateEntryId(entry.id);
+  let log;
+  try { log = await readFile(file, 'utf8'); } catch (error) { if (error.code !== 'ENOENT') throw error; log = ''; }
+  if (log && !log.endsWith('\n')) throw new Error(`Incomplete ${label} log: missing final newline`);
+  const seen = new Set();
+  for (const prior of parseLog(log, label)) {
+    if (prior === null || typeof prior !== 'object' || !('id' in prior)) continue; // Legacy experimental entries have no ID.
+    validateEntryId(prior.id);
+    if (seen.has(prior.id)) throw new Error(`Duplicate entry id in ${label} log: ${prior.id}`);
+    seen.add(prior.id);
+  }
+  if (seen.has(entry.id)) throw new Error(`Duplicate entry id in ${label} log: ${entry.id}`);
+  await appendFile(file, JSON.stringify(entry) + '\n', { encoding: 'utf8', mode: 0o600 });
+}
 export async function openDay(root, date = localTimestamp().slice(0, 10)) {
   const file = dayPath(root, date);
   let log;
   try { log = await readFile(file, 'utf8'); } catch (e) { if (e.code !== 'ENOENT') throw e; return { date, entries: [] }; }
   return { date, entries: parseLog(log, 'day') };
 }
-export async function appendDay(root, type, comment, session, task, timestamp = new Date()) {
+export async function appendDay(root, type, comment, session, task, timestamp = new Date(), entryId = randomUUID()) {
   if (!dayTypes.has(type)) throw new Error('Invalid day entry type');
   comment = nonempty(comment, 'comment');
   validateSession(session);
   if (task !== undefined) taskPath(root, task);
   const ts = localTimestamp(timestamp);
   const file = dayPath(root, ts.slice(0, 10));
-  const entry = { ts, session, type, ...(task !== undefined ? { task } : {}), comment };
+  const entry = { id: entryId, ts, session, type, ...(task !== undefined ? { task } : {}), comment };
   await mkdir(join(rootPath(root), 'days'), { recursive: true });
-  await appendFile(file, JSON.stringify(entry) + '\n', { encoding: 'utf8', mode: 0o600 });
+  await appendUnique(file, entry, 'day');
   return entry;
 }
 export async function createTaskWithDay(root, id, title, description, currentState, session, timestamp = new Date()) {
   validateSession(session);
   const ts = localTimestamp(timestamp);
+  const entryId = randomUUID();
   const task = await createTask(root, id, title, description, currentState);
   try {
-    const dayEntry = await appendDay(root, 'task_open', `Started: ${title.trim()}`, session, id, timestamp);
+    const dayEntry = await appendDay(root, 'task_open', `Started: ${title.trim()}`, session, id, timestamp, entryId);
     return { task, day: { status: 'appended', entry: dayEntry } };
   } catch (error) {
-    return { task, day: { status: 'uncertain', date: ts.slice(0, 10), intendedEntry: { ts, session, type: 'task_open', task: id, comment: `Started: ${title.trim()}` }, message: 'Task created, but day append failed or has an unknown outcome. Inspect the day log before manually appending; do not recreate the task or retry blindly.', error: error instanceof Error ? error.message : String(error) } };
+    return { task, day: { status: 'uncertain', date: ts.slice(0, 10), intendedEntry: { id: entryId, ts, session, type: 'task_open', task: id, comment: `Started: ${title.trim()}` }, message: 'Task created, but day append failed or has an unknown outcome. Inspect the day log before manually appending; do not recreate the task or retry blindly.', error: error instanceof Error ? error.message : String(error) } };
   }
 }
 
@@ -99,14 +120,14 @@ export async function readTask(root, id) {
   const entries = parseLog(log, 'task');
   return { id, content, entries };
 }
-export async function appendTask(root, id, type, comment, session, timestamp = new Date()) {
+export async function appendTask(root, id, type, comment, session, timestamp = new Date(), entryId = randomUUID()) {
   const base = taskPath(root, id);
   if (!types.has(type)) throw new Error('Invalid entry type');
   comment = nonempty(comment, 'comment');
   validateSession(session);
   await stat(`${base}.md`);
-  const entry = { ts: localTimestamp(timestamp), session, type, comment };
-  await appendFile(`${base}.jsonl`, JSON.stringify(entry) + '\n', { encoding: 'utf8', mode: 0o600 });
+  const entry = { id: entryId, ts: localTimestamp(timestamp), session, type, comment };
+  await appendUnique(`${base}.jsonl`, entry, 'task');
   return entry;
 }
 export async function updateCurrentState(root, id, currentState, expectedContent) {
@@ -133,6 +154,7 @@ export async function closeTask(root, id, status, conclusion, expectedContent, s
   if (typeof expectedContent !== 'string') throw new Error('expectedContent from readTask is required');
   validateSession(session);
   const ts = localTimestamp(timestamp);
+  const entryId = randomUUID();
   const file = await open(`${base}.md`, 'r+');
   let after, title;
   try {
@@ -156,10 +178,10 @@ export async function closeTask(root, id, status, conclusion, expectedContent, s
   const task = { id, content: after };
   const comment = `Closed: ${title}`;
   try {
-    const entry = await appendDay(root, 'task_close', comment, session, id, timestamp);
+    const entry = await appendDay(root, 'task_close', comment, session, id, timestamp, entryId);
     return { task, day: { status: 'appended', entry } };
   } catch (error) {
-    return { task, day: { status: 'uncertain', date: ts.slice(0, 10), intendedEntry: { ts, session, type: 'task_close', task: id, comment }, message: 'Task closed, but day append failed or has an unknown outcome. Inspect the day log before manually appending; do not reopen the task or retry blindly.', error: error instanceof Error ? error.message : String(error) } };
+    return { task, day: { status: 'uncertain', date: ts.slice(0, 10), intendedEntry: { id: entryId, ts, session, type: 'task_close', task: id, comment }, message: 'Task closed, but day append failed or has an unknown outcome. Inspect the day log before manually appending; do not reopen the task or retry blindly.', error: error instanceof Error ? error.message : String(error) } };
   }
 }
 export async function listOpenTasks(root) {
