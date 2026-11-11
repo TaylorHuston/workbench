@@ -7,19 +7,39 @@
 </head>
 <body>
   <div id="app">
-    <aside class="sidebar" aria-label="File browser">
+    <aside class="sidebar" aria-label="Workbench navigation">
       <header class="brand"><span class="brand-mark">π</span><span><strong>Pi Workbench</strong><small>Local workspace</small></span></header>
+      <nav class="sidebar-tabs" aria-label="Sidebar views"><button id="files-tab" type="button" aria-pressed="true">Files</button><button id="agent-tab" type="button" aria-pressed="false">Sessions</button></nav>
+      <div id="explorer-panel" class="sidebar-panel">
       <div class="explorer-heading"><span>Files</span><button id="refresh" title="Refresh file tree" aria-label="Refresh file tree">↻</button></div>
       <button class="root-label" id="select-root" type="button"><span class="folder-icon" aria-hidden="true"></span><span>~/.pi</span><span class="root-tag">root folder</span></button>
       <div class="tree-actions" aria-label="File actions"><button id="new-file" type="button">New file</button><button id="new-folder" type="button">New folder</button><button id="rename" type="button" disabled>Rename</button><button id="trash" type="button" disabled>Trash</button></div>
       <p id="selection" class="selection" title="Selected location">Selected: ~/.pi</p><p id="tree-status" class="tree-status" role="status" aria-live="polite"></p>
       <nav id="tree" aria-label="Markdown files"></nav>
+      </div>
+      <div id="sessions-panel" class="sidebar-panel" hidden>
+        <div class="explorer-heading"><span>Sessions</span><button id="session-refresh" title="Refresh sessions" aria-label="Refresh sessions">↻</button></div>
+        <p class="session-warning">Archive hides a session here; it does not stop it. Close session closes the Workbench runtime without archiving or deleting it.</p>
+        <p class="session-warning">Concurrent use from other apps is not detected.</p>
+        <p id="session-list-status" class="tree-status" role="status" aria-live="polite"></p>
+        <nav id="session-list" aria-label="Saved Pi sessions"></nav>
+      </div>
       <footer class="sidebar-footer">Local files · explicit save</footer>
     </aside>
     <main class="workspace">
-      <header class="toolbar"><div class="path"><span class="path-root">~/.pi</span><span id="path"> / No file selected</span></div><div class="actions"><span id="status" role="status" aria-live="polite"></span><button id="theme-toggle" type="button" aria-pressed="false">Dark mode</button><button id="save" disabled>Save changes</button></div></header>
+      <div class="workbench-tabs"><button id="theme-toggle" type="button" aria-pressed="false">Dark mode</button></div>
+      <div id="files-view" class="files-view">
+      <header class="toolbar"><div class="path"><span class="path-root">~/.pi</span><span id="path"> / No file selected</span></div><div class="actions"><span id="status" role="status" aria-live="polite"></span><button id="save" disabled>Save changes</button></div></header>
       <section id="empty" class="empty"><div class="empty-icon">✳</div><h1>A space to work.</h1><p>Choose a Markdown file from the sidebar to open it here.</p><span>Everything stays on this machine.</span></section>
       <section id="document" class="document" hidden><div class="document-heading"><span class="document-kind">Markdown document</span><h1 id="filename"></h1><p id="document-path"></p></div><div id="editor" aria-label="Markdown editor"></div></section>
+      </div>
+      <section id="agent-view" class="agent-view" hidden aria-label="Pi agent session">
+        <header class="agent-heading"><div><h1>Agent session</h1><p>Continue a saved Pi session.</p></div><button id="agent-close" type="button" title="Close the Workbench runtime without archiving or deleting the session" disabled>Close session</button></header>
+        <p class="agent-notice">Pi can read and change files and run commands with your permissions. Model calls may incur charges. Extensions, skills, MCP, and project Pi settings are disabled in this spike.</p>
+        <div class="agent-session-meta"><span id="agent-model">No session open</span><span id="agent-status" role="status" aria-live="polite"></span></div>
+        <div id="agent-transcript" class="agent-transcript" aria-label="Conversation" aria-live="polite"><p class="agent-placeholder">Choose a saved session in the sidebar.</p></div>
+        <form id="agent-form" class="agent-form"><label for="agent-message">Message</label><textarea id="agent-message" rows="3" placeholder="Write a message to Pi" disabled></textarea><div><button id="agent-stop" type="button" disabled>Stop</button><button id="agent-send" type="submit" disabled>Send message</button></div></form>
+      </section>
     </main>
   </div>
   <script type="module" src="/src/main.js"></script>

@@ -5,6 +5,7 @@ import { markdown } from '@codemirror/lang-markdown';
 import { GFM } from '@lezer/markdown';
 import { livePreviewPlugin, markdownStylePlugin, mouseSelectingField, editorTheme } from 'codemirror-live-markdown';
 import './style.css';
+import './agent.js';
 
 const $ = (selector) => document.querySelector(selector);
 const themePreference = window.matchMedia('(prefers-color-scheme: dark)');
@@ -138,6 +139,6 @@ $('#new-folder').addEventListener('click', () => manage('create', 'directory'));
 $('#rename').addEventListener('click', () => manage('rename'));
 $('#trash').addEventListener('click', () => manage('trash'));
 $('#refresh').addEventListener('click', () => { if (!managing) { select('', 'directory'); loadTree($('#tree')); } });
-window.addEventListener('beforeunload', (event) => { if (dirty() || saving || managing) { event.preventDefault(); event.returnValue = ''; } });
+window.addEventListener('beforeunload', (event) => { if (dirty() || saving || managing || $('#agent-message').value.trim()) { event.preventDefault(); event.returnValue = ''; } });
 window.addEventListener('keydown', (event) => { if ((event.metaKey || event.ctrlKey) && event.key.toLowerCase() === 's') { event.preventDefault(); save(); } });
 loadTree($('#tree'));

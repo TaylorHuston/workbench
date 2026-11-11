@@ -6,6 +6,7 @@ import { dirname, join, resolve, sep } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { execFile } from 'node:child_process';
 import { promisify } from 'node:util';
+import { createAgentHost } from './agent.mjs';
 
 const appDir = dirname(fileURLToPath(import.meta.url));
 const execFileAsync = promisify(execFile);
@@ -123,20 +124,34 @@ export async function createWorkbench(root, { trash = macTrash, move = macRename
   return { list, read, save, inspect, create, rename, remove };
 }
 
-export function createServerFor(workbench) {
+export function createServerFor(workbench, agent) {
   return createServer(async (req, res) => {
     const expectedHost = `127.0.0.1:${req.socket.localPort}`;
     if (req.headers.host !== expectedHost || (req.headers.origin && req.headers.origin !== `http://${expectedHost}`)) return json(res, 403, { error: 'Origin not allowed' });
     const url = new URL(req.url, `http://${expectedHost}`);
     try {
+      if (agent && req.method === 'GET' && url.pathname === '/api/agent/state') return json(res, 200, agent.snapshot());
+      if (agent && req.method === 'GET' && url.pathname === '/api/agent/sessions') return json(res, 200, await agent.list());
+      if (agent && req.method === 'GET' && url.pathname === '/api/agent/events') {
+        res.writeHead(200, { 'Content-Type': 'text/event-stream', 'Cache-Control': 'no-store', Connection: 'keep-alive', 'X-Content-Type-Options': 'nosniff' });
+        const unsubscribe = agent.subscribe((event) => res.write(`data: ${JSON.stringify(event)}\n\n`));
+        req.on('close', unsubscribe); return;
+      }
       if (req.method === 'GET' && url.pathname === '/api/list') return json(res, 200, await workbench.list(url.searchParams.get('path') ?? ''));
       if (req.method === 'GET' && url.pathname === '/api/file') return json(res, 200, await workbench.read(url.searchParams.get('path') ?? ''));
       if (req.method === 'GET' && url.pathname === '/api/entry') return json(res, 200, await workbench.inspect(url.searchParams.get('path') ?? '', url.searchParams.get('kind')));
-      if (req.method === 'POST' && (url.pathname === '/api/file' || url.pathname === '/api/entry')) {
+      if (req.method === 'POST' && (url.pathname === '/api/file' || url.pathname === '/api/entry' || (agent && url.pathname.startsWith('/api/agent/')))) {
         if (req.headers.origin !== `http://${expectedHost}` || !req.headers['content-type']?.startsWith('application/json')) return json(res, 403, { error: 'Origin not allowed' });
         req.setEncoding('utf8');
         let data = ''; for await (const chunk of req) { data += chunk; if (data.length > 10_000_000) return json(res, 413, { error: 'File too large' }); }
-        const { path, content, version, action, parent, name, kind } = JSON.parse(data);
+        const { path, content, version, action, parent, name, kind, key, message, archived } = JSON.parse(data);
+        if (url.pathname === '/api/agent/archive') return json(res, 200, await agent.setArchived(key, archived));
+        if (url.pathname === '/api/agent/open') return json(res, 200, await agent.open(key));
+        if (['/api/agent/close', '/api/agent/send', '/api/agent/stop'].includes(url.pathname) && (typeof key !== 'string' || agent.snapshot()?.key !== key)) throw new Error('Session changed; review the active session before retrying');
+        if (url.pathname === '/api/agent/close') { await agent.close(); return json(res, 200, { ok: true }); }
+        if (url.pathname === '/api/agent/send') return json(res, 200, agent.send(message));
+        if (url.pathname === '/api/agent/stop') { await agent.stop(); return json(res, 200, { ok: true }); }
+        if (url.pathname.startsWith('/api/agent/')) return json(res, 404, { error: 'Not found' });
         if (url.pathname === '/api/file') return json(res, 200, await workbench.save(path, content, version));
         if (action === 'create') return json(res, 200, await workbench.create(parent, name, kind));
         if (action === 'rename') return json(res, 200, await workbench.rename(path, kind, name, version));
@@ -157,5 +172,17 @@ if (process.argv[1] && resolve(process.argv[1]) === fileURLToPath(import.meta.ur
   const root = process.env.PI_WORKBENCH_ROOT || join(homedir(), '.pi');
   const port = Number(process.env.PORT || 4175);
   const workbench = await createWorkbench(root);
-  createServerFor(workbench).listen(port, '127.0.0.1', () => console.log(`Pi Workbench: http://127.0.0.1:${port}`));
+  const agent = createAgentHost();
+  const server = createServerFor(workbench, agent);
+  server.listen(port, '127.0.0.1', () => console.log(`Pi Workbench: http://127.0.0.1:${port}`));
+  let shuttingDown = false;
+  const shutdown = async () => {
+    if (shuttingDown) return;
+    shuttingDown = true;
+    try { await agent.stop(); await agent.close(); }
+    catch (error) { console.error(`Agent shutdown incomplete; inspect session locks: ${error.message}`); }
+    finally { server.close(); server.closeAllConnections(); }
+  };
+  process.once('SIGINT', () => { void shutdown(); });
+  process.once('SIGTERM', () => { void shutdown(); });
 }

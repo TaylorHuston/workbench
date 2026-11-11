@@ -61,3 +61,42 @@
 :root[data-theme="dark"] .tree-actions button{background:#253a32;border-color:#4c6b5d;color:#d4eae0}
 :root[data-theme="dark"] .tree-actions button:hover:not(:disabled){background:#375346}
 :root[data-theme="dark"] .selection,:root[data-theme="dark"] .tree-status{color:#b2cec0}
+
+.sidebar-tabs{display:flex;gap:4px;padding:12px 12px 0;border-bottom:1px solid #d7e1dd}
+.sidebar-tabs button{flex:1;border:0;border-bottom:2px solid transparent;background:transparent;padding:10px;color:#58736c;font-size:13px;font-weight:650}
+.sidebar-tabs button[aria-pressed="true"]{border-bottom-color:#4f8f7b;color:#285e58}
+.sidebar-panel{display:flex;flex-direction:column;flex:1;min-height:0}
+.session-warning{margin:0 16px 8px;color:#5c756c;font-size:11px;line-height:1.45}
+#session-list{overflow:auto;flex:1;padding:8px 12px 12px}
+.session-group{margin:3px 0}.session-group summary{cursor:pointer;padding:8px;color:#48685b;font-size:12px;font-weight:650;overflow-wrap:anywhere}
+.session-button{display:block;width:100%;text-align:left;border:0;border-radius:5px;padding:9px 10px 9px 20px;background:transparent;color:#445e58;font-size:12px;line-height:1.4;overflow-wrap:anywhere}
+.session-row{display:flex;align-items:center;gap:4px}.session-row .session-button{width:auto;flex:1;min-width:0}.session-archive{flex:none;border:0;border-radius:4px;padding:6px 5px;background:transparent;color:#54766a;font-size:10px}.session-archive:hover{background:#d5e4de}.session-archive:disabled{opacity:.5;cursor:default}
+.archived-sessions{border-top:1px solid #d2dfda;margin-top:12px;padding-top:6px}.archived-sessions>summary{cursor:pointer;padding:8px;color:#48685b;font-size:12px;font-weight:700}
+.session-title{display:-webkit-box;-webkit-box-orient:vertical;-webkit-line-clamp:2;overflow:hidden}.session-date{display:block;margin-top:3px;color:#6b857b;font-size:11px}
+.session-button:hover,.session-button[aria-current="true"]{background:#d5e4de;color:#234e46}.session-button:disabled{opacity:.6;cursor:default}
+:root[data-theme="dark"] .sidebar-tabs{border-color:#34433f}:root[data-theme="dark"] .sidebar-tabs button{color:#a8beb4}:root[data-theme="dark"] .sidebar-tabs button[aria-pressed="true"]{color:#d8eee3;border-color:#9bc9b9}
+:root[data-theme="dark"] .session-warning,:root[data-theme="dark"] .session-group summary,:root[data-theme="dark"] .session-button{color:#bfd3c9}
+:root[data-theme="dark"] .session-button:hover,:root[data-theme="dark"] .session-button[aria-current="true"]{background:#344d43;color:#e3f4eb}
+:root[data-theme="dark"] .session-date{color:#a1b9ae}
+:root[data-theme="dark"] .session-archive,:root[data-theme="dark"] .archived-sessions>summary{color:#a8cabb}:root[data-theme="dark"] .session-archive:hover{background:#344d43}:root[data-theme="dark"] .archived-sessions{border-color:#456056}
+.workbench-tabs{display:flex;gap:6px;padding:8px 32px 0;border-bottom:1px solid #e3e9e5;background:#f6f9f6}
+.workbench-tabs button{border:0;border-bottom:2px solid transparent;background:transparent;padding:10px 12px;color:#5b756c;font-weight:650;font-size:13px}
+.workbench-tabs button[aria-pressed="true"]{color:#285e58;border-bottom-color:#4f8f7b}
+.workbench-tabs #theme-toggle{margin-left:auto;align-self:center}
+.files-view{flex:1;min-height:0;display:flex;flex-direction:column}
+.agent-view{flex:1;min-height:0;display:flex;flex-direction:column;padding:24px 32px;gap:14px}
+.agent-heading{display:flex;justify-content:space-between;align-items:center;gap:12px}
+.agent-heading h1{font-size:22px;letter-spacing:-.03em;margin:0}.agent-heading p{font-size:13px;color:#698078;margin:4px 0 0}
+.agent-notice{font-size:12px;line-height:1.45;color:#506c62;background:#eaf3ed;border:1px solid #d4e4d9;padding:10px 12px;border-radius:6px;margin:0}
+.agent-form label{font-size:12px;font-weight:700;color:#4b695d}.agent-form textarea{font:inherit;color:inherit;background:#fff;border:1px solid #c8d8ce;border-radius:6px;padding:9px;min-width:0}
+.agent-view button{border:1px solid #c5d8d0;border-radius:6px;padding:9px 12px;background:#eff5f0;color:#31594e;font-size:12px;font-weight:650}.agent-view button:disabled{opacity:.5;cursor:default}.agent-view button:hover:not(:disabled){background:#dcebe1}
+.agent-session-meta{display:flex;justify-content:space-between;gap:12px;font-size:12px;color:#657f73;overflow-wrap:anywhere}.agent-transcript{overflow:auto;flex:1;min-height:100px;background:#f3f7f3;border:1px solid #e0eae1;border-radius:8px;padding:16px}.agent-placeholder{color:#758b7d;font-size:13px}.agent-message{max-width:850px;margin:0 0 18px;font-size:14px;line-height:1.6}.agent-message strong{display:block;font-size:12px;color:#527165;margin-bottom:5px}.agent-message div{white-space:pre-wrap;overflow-wrap:anywhere}.agent-message.user div{background:#e3eee6;border-radius:8px;padding:10px 12px}
+.agent-form{display:grid;gap:7px}.agent-form textarea{resize:vertical;width:100%;min-height:70px}.agent-form>div{display:flex;justify-content:flex-end;gap:8px}.agent-form #agent-send{background:#285e58;color:white;border-color:#285e58}
+:root[data-theme="dark"] .workbench-tabs{background:#1c2927;border-color:#34433f}:root[data-theme="dark"] .workbench-tabs button{color:#a8beb4}:root[data-theme="dark"] .workbench-tabs button[aria-pressed="true"]{color:#d8eee3;border-color:#9bc9b9}
+:root[data-theme="dark"] .agent-heading p,:root[data-theme="dark"] .agent-session-meta,:root[data-theme="dark"] .agent-placeholder{color:#a8bdb4}
+:root[data-theme="dark"] .agent-notice{background:#273a31;border-color:#3d594b;color:#c4ded0}
+:root[data-theme="dark"] .agent-form label,:root[data-theme="dark"] .agent-message strong{color:#accdbd}
+:root[data-theme="dark"] .agent-form textarea{background:#202e29;border-color:#4c6659;color:#e0eee5}
+:root[data-theme="dark"] .agent-view button{background:#253a32;border-color:#4c6b5d;color:#d4eae0}:root[data-theme="dark"] .agent-view button:hover:not(:disabled){background:#375346}:root[data-theme="dark"] .agent-form #agent-send{background:#a2d0bd;color:#142620;border-color:#a2d0bd}
+:root[data-theme="dark"] .agent-transcript{background:#1c2924;border-color:#34493e}:root[data-theme="dark"] .agent-message.user div{background:#30463a}
+@media(max-width:700px){.workbench-tabs{padding-left:12px}.agent-view{padding:18px 16px;min-height:600px}}
