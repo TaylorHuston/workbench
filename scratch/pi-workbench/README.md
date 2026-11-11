@@ -8,7 +8,7 @@
 
 ## Purpose
 
-Browse and edit Markdown under `~/.pi` and try a minimal Pi SDK session interface while exploring a potential Markdown-first agent workbench. This is a standalone local app, not a Pi extension or an Anthracite implementation.
+Browse and edit Markdown in a selected working directory and try a minimal Pi SDK session interface while exploring a potential Markdown-first agent workbench. This is a standalone local app, not a Pi extension or an Anthracite implementation.
 
 ## Run
 
@@ -18,15 +18,21 @@ npm run build
 npm start
 ```
 
-Open http://127.0.0.1:4175. The server binds only to loopback. `PORT` selects another port. To test on disposable files instead of real configuration, set `PI_WORKBENCH_ROOT` to an existing directory before starting. Use `npm test` for isolated filesystem and HTTP checks.
+Open http://127.0.0.1:4175. The server binds only to loopback. `PORT` selects another port. `PI_WORKBENCH_ROOT` overrides the default file workspace only; it does not isolate Pi sessions or skills. Use an isolated `HOME` and `PI_CODING_AGENT_DIR` as well for disposable testing. Use `npm test` for isolated filesystem and HTTP checks.
 
-Choose a file, edit, and click **Save** in the document header or press Cmd/Ctrl+S. **Discard** confirms and restores the last loaded or saved editor snapshot without writing to disk; it does not reload external changes. Changing files or leaving with unsaved changes prompts for confirmation. A save refuses to overwrite a file whose content changed since it was opened; copy your edits before reopening it. The appearance follows the system light/dark setting until you use the sidebar theme icon; your choice is saved in the browser.
+Choose a workspace from the sidebar dropdown (`~/.pi` is the default), then choose a file, edit, and click **Save** in the document header or press Cmd/Ctrl+S. **Discard** confirms and restores the last loaded or saved editor snapshot without writing to disk; it does not reload external changes. Changing files or leaving with unsaved changes prompts for confirmation. A save refuses to overwrite a file whose content changed since it was opened; copy your edits before reopening it. The appearance follows the system light/dark setting until you use the sidebar theme icon; your choice is saved in the browser.
 
-Select the root, a folder, or a file in the tree to choose where actions apply. **New file** and **New folder** create inside the selected folder (or beside the selected file). New file names must end in `.md`. **Rename** changes the selected item's name without replacing an existing item. **Trash** asks for confirmation and uses macOS Trash; only empty folders can be trashed. Save or discard the open document before renaming or trashing it or an ancestor folder. macOS's `/usr/bin/trash` and `osascript` are required for trash and rename respectively.
+Select the root, a folder, or a file in the tree to choose where **New file** and **New folder** create items. New file names must end in `.md`. Click the open document's filename to rename it (Enter confirms, Escape cancels); **Trash** moves the open file to macOS Trash after confirmation. Save or discard edits before renaming or trashing. The interface does not rename or trash folders. It is a generic Markdown editor and does not update Obsidian links on rename. macOS's `/usr/bin/trash` and `osascript` are required for trash and rename respectively.
 
 ## Agent session spike
 
-The sidebar **Sessions** tab lists saved Pi sessions from the standard `~/.pi/agent/sessions/` tree, grouped by their recorded working directory. It also lists sessions made by the earlier Workbench spike under `~/.pi/agent/pi-workbench/sessions/`. Select one to open it in a new SDK runtime; Workbench does not create new sessions. Sessions without a recorded or available working directory are listed but cannot be opened.
+The sidebar workspace dropdown selects the directory for both **Files** and **Sessions**. `~/.pi` is first and selected by default; other choices are only workspaces explicitly added in Workbench. Use **Add workspace** and an absolute path to register an existing folder and give it a name, even if it has no sessions. **Manage workspaces** renames, archives, or restores registrations. Archiving hides a workspace from the normal dropdown without changing its folder or sessions; the default workspace cannot be archived. Archiving the selected workspace first switches to the default, respecting the existing draft and run safeguards. If another client archives your selected workspace, it remains selected until you switch away.
+
+Workbench stores these registrations under `~/.pi/agent/pi-workbench/workspaces/`, canonicalizes paths, and does not create the workspace directory, repositories, Git branches, or worktrees. Older path-only registrations remain readable and acquire name/archive fields when explicitly changed. Workspace metadata updates use per-record locks and revision checks; preserve stale locks or invalid/temporary metadata for inspection rather than automatically deleting them. A workspace is a working directory, not a sandbox. Existing Pi sessions appear after their working directory is added and selected.
+
+The **Sessions** tab shows sessions for the selected directory from the standard `~/.pi/agent/sessions/` tree and the earlier Workbench spike's `~/.pi/agent/pi-workbench/sessions/`. Use **+ New** to start one. Switching workspaces leaves an idle session open but hides it outside its workspace; opening another session replaces that runtime. Switching is blocked while a run is active or a message draft is present, and prompts before discarding file edits.
+
+Starting a session opens an empty Pi runtime without calling a model. Like Pi, it writes the session JSONL only when the first message is sent. Until then, the empty session is shown only while it is open and disappears if closed or switched away from; the workspace registration remains. Sessions without a recorded working directory cannot be assigned to a workspace in this interface. A session whose directory is unavailable cannot be opened.
 
 **Archive** hides a session in a collapsed Archived group; **Restore** returns it to the visible list. **Close session** instead closes the Workbench runtime without archiving or deleting the session. Archive state is Workbench-only metadata in `~/.pi/agent/pi-workbench/archived-sessions.json`, keyed by the session file path. Other Pi clients do not see this status; moving the file changes its key. Archiving never moves or changes the Pi session file and does not close or stop a running session. Metadata is serialized using an `archive-lock` in the same directory; if a lock is left after a crash or metadata is invalid, preserve and inspect it before recovery. Entries for missing sessions are retained, not automatically pruned.
 

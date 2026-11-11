@@ -42,7 +42,7 @@
 body { margin: 0; }
 button { font: inherit; cursor: pointer; }
 button:disabled { cursor: default; }
-button:focus-visible, summary:focus-visible, textarea:focus-visible, .cm-editor:focus-within { outline: 2px solid var(--focus); outline-offset: 2px; }
+button:focus-visible, summary:focus-visible, textarea:focus-visible, select:focus-visible, input:focus-visible, .cm-editor:focus-within { outline: 2px solid var(--focus); outline-offset: 2px; }
 [hidden] { display: none !important; }
 .sr-only { position: absolute; width: 1px; height: 1px; padding: 0; margin: -1px; overflow: hidden; clip: rect(0, 0, 0, 0); white-space: nowrap; border: 0; }
 #app { display: flex; height: 100vh; height: 100dvh; min-height: 0; }
@@ -55,13 +55,33 @@ button:focus-visible, summary:focus-visible, textarea:focus-visible, .cm-editor:
 #theme-toggle svg { width: 19px; height: 19px; }
 .theme-sun, :root[data-theme="dark"] .theme-moon { display: none; }
 :root[data-theme="dark"] .theme-sun { display: block; }
+.workspace-picker { display: flex; gap: 6px; padding: 2px 12px 8px; }
+.workspace-picker select { flex: 1; min-width: 0; padding: 8px; border: 1px solid var(--line); border-radius: 6px; background: var(--surface); color: var(--text); font: inherit; font-size: 12px; }
+#workspace-add, #workspace-manage { width: 34px; flex: none; border: 1px solid var(--line); border-radius: 6px; background: var(--surface); color: var(--muted); font-size: 20px; }
+#workspace-add:hover:not(:disabled), #workspace-manage:hover:not(:disabled) { background: var(--hover); color: var(--text); }
+#workspace-add:disabled, #workspace-manage:disabled { opacity: .5; }
+.workspace-manager { flex: none; max-height: 240px; overflow-y: auto; margin: 0 12px 8px; padding: 5px 8px; border: 1px solid var(--line); border-radius: 6px; background: var(--surface); }
+.workspace-manager-row { display: flex; flex-direction: column; gap: 6px; padding: 9px 0; border-bottom: 1px solid var(--line); }
+.workspace-manager-details { min-width: 0; }
+.workspace-manager-details strong, .workspace-manager-details small { display: block; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.workspace-manager-details strong { font-size: 12px; }
+.workspace-manager-details small, .workspace-manager-empty { margin: 3px 0 0; color: var(--muted); font-size: 11px; }
+.workspace-manager-actions { display: flex; gap: 6px; }
+.workspace-manager-actions button { padding: 4px 8px; border: 1px solid var(--line); border-radius: 5px; background: var(--page); color: var(--muted); font-size: 11px; }
+.workspace-manager-actions button:hover:not(:disabled) { background: var(--hover); color: var(--text); }
+.workspace-manager-actions button:disabled { opacity: .5; }
+.archived-workspaces > summary { padding: 8px 0; color: var(--muted); cursor: pointer; font-size: 11px; font-weight: 650; }
 .sidebar-tabs { display: flex; gap: 4px; padding: 4px 12px 0; border-bottom: 1px solid var(--line); }
 .sidebar-tabs button { flex: 1; padding: 10px; border: 0; border-bottom: 2px solid transparent; background: transparent; color: var(--muted); font-size: 13px; font-weight: 600; }
 .sidebar-tabs button[aria-pressed="true"] { color: var(--text); border-bottom-color: var(--accent); }
 .sidebar-panel { display: flex; flex-direction: column; flex: 1; min-height: 0; }
 .explorer-heading { display: flex; justify-content: space-between; align-items: center; gap: 8px; padding: 16px 16px 10px; font-size: 13px; font-weight: 650; }
+.workspace-actions { display: flex; align-items: center; gap: 3px; }
 .explorer-heading #refresh, .explorer-heading #session-refresh { border: 0; background: transparent; color: var(--muted); font-size: 21px; padding: 2px 6px; border-radius: 5px; }
 .explorer-heading #refresh:hover, .explorer-heading #session-refresh:hover { background: var(--hover); }
+#session-new { padding: 6px 9px; border: 1px solid var(--line); border-radius: 6px; background: var(--surface); color: var(--text); font-size: 11px; font-weight: 650; }
+#session-new:hover:not(:disabled) { background: var(--hover); }
+#session-new:disabled { opacity: .5; }
 .root-label { width: calc(100% - 24px); display: flex; align-items: center; gap: 8px; margin: 0 12px; padding: 10px; border: 1px solid transparent; border-radius: 6px; background: var(--hover); color: var(--text); text-align: left; font-size: 13px; font-weight: 650; }
 .root-tag { margin-left: auto; font-size: 10px; font-weight: 500; color: var(--faint); }
 .tree-actions { display: grid; grid-template-columns: 1fr 1fr; gap: 5px; padding: 10px 12px 0; }
@@ -85,10 +105,9 @@ button:focus-visible, summary:focus-visible, textarea:focus-visible, .cm-editor:
 .root-label.selected, #tree summary.selected, #tree .file.selected { outline: 1px solid var(--faint); }
 .tree-empty { display: block; padding: 8px; color: var(--muted); }
 #session-list { overflow: auto; flex: 1; padding: 8px 12px 12px; }
-.session-group { margin: 3px 0; }
-.session-group summary, .archived-sessions > summary { cursor: pointer; padding: 8px; color: var(--muted); font-size: 12px; font-weight: 650; overflow-wrap: anywhere; }
+.archived-sessions > summary { cursor: pointer; padding: 8px; color: var(--muted); font-size: 12px; font-weight: 650; overflow-wrap: anywhere; }
 .session-row { display: flex; align-items: center; gap: 4px; }
-.session-button { display: block; flex: 1; min-width: 0; padding: 9px 10px 9px 20px; border: 0; border-radius: 6px; background: transparent; color: var(--text); text-align: left; font-size: 12px; line-height: 1.4; overflow-wrap: anywhere; }
+.session-button { display: block; flex: 1; min-width: 0; padding: 9px 10px; border: 0; border-radius: 6px; background: transparent; color: var(--text); text-align: left; font-size: 12px; line-height: 1.4; overflow-wrap: anywhere; }
 .session-button:hover, .session-button[aria-current="true"] { background: var(--selected); }
 .session-button:disabled, .session-archive:disabled { opacity: .55; }
 .session-title { display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 2; overflow: hidden; }
@@ -120,6 +139,9 @@ button:focus-visible, summary:focus-visible, textarea:focus-visible, .cm-editor:
 .document-actions button:disabled { opacity: .5; }
 .document-kind { color: var(--muted); font-size: 12px; font-weight: 650; }
 .document-heading h1 { margin: 10px 0 7px; font-size: 29px; letter-spacing: -.035em; overflow-wrap: anywhere; }
+#filename { max-width: 100%; padding: 0; border: 0; background: transparent; color: inherit; font: inherit; letter-spacing: inherit; text-align: left; overflow-wrap: anywhere; }
+#filename:hover:not(:disabled) { text-decoration: underline; text-decoration-thickness: 1px; text-underline-offset: 4px; }
+#rename-input { max-width: 100%; padding: 3px 6px; border: 1px solid var(--focus); border-radius: 5px; background: var(--surface); color: var(--text); font: inherit; letter-spacing: inherit; }
 .document-heading p { margin: 0; color: var(--muted); font-size: 12px; overflow-wrap: anywhere; }
 #editor { max-width: 850px; margin: 0 auto; padding: 0 36px 80px; }
 .cm-editor { min-height: 300px; background: transparent !important; }
@@ -148,11 +170,20 @@ button:focus-visible, summary:focus-visible, textarea:focus-visible, .cm-editor:
 .agent-form #agent-send { border-color: var(--accent); background: var(--accent); color: var(--accent-text); }
 .agent-form button:disabled { opacity: .5; }
 @media (max-width: 700px) {
+  .workspace-manager { max-height: 105px; }
   #app { flex-direction: column; }
-  .sidebar { width: 100%; height: 36vh; min-height: 175px; max-height: 290px; border-right: 0; border-bottom: 1px solid var(--line); }
-  .brand { min-height: 54px; }
+  .sidebar { width: 100%; height: 36vh; min-height: 175px; max-height: 290px; overflow-y: auto; border-right: 0; border-bottom: 1px solid var(--line); }
+  .brand { min-height: 44px; }
+  .workspace-picker { padding-bottom: 4px; }
+  .workspace-picker select { padding: 5px 8px; }
+  .sidebar-tabs button { padding: 7px; }
+  .sidebar-panel { flex: 0 0 auto; }
+  #tree, #session-list { flex: 0 0 auto; min-height: 65px; max-height: 140px; }
+  .selection { margin-top: 4px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .root-label { padding: 6px 10px; }
+  .tree-actions { padding-top: 5px; }
   .sidebar-footer { display: none; }
-  .explorer-heading { padding-top: 10px; }
+  .explorer-heading { padding: 8px 16px 4px; }
   .workspace { flex: 1; }
   .document-heading { padding: 30px 24px 16px; }
   #editor { padding: 0 20px 50px; }

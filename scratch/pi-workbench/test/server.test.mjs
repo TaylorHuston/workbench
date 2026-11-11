@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdtemp, mkdir, readFile, writeFile, symlink, rm, rename, readdir } from 'node:fs/promises';
+import { mkdtemp, mkdir, readFile, realpath, writeFile, symlink, rm, rename, readdir } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { basename, join } from 'node:path';
 import { request } from 'node:http';
@@ -76,6 +76,55 @@ test('moves files and empty folders to an injected Trash; rejects stale and none
   assert.deepEqual((await readdir(trashDir)).sort(), ['.hidden', 'note.md']);
 });
 
+test('HTTP scopes Markdown file operations to the selected workspace', async (t) => {
+  const { root, trashDir, store } = await fixture(t); const other = join(root, 'other'); await mkdir(other);
+  await writeFile(join(other, 'note.md'), '# other\n'); await writeFile(join(other, 'private.txt'), 'not listed');
+  await symlink(join(root, '.hidden'), join(other, 'outside'));
+  const server = createServerFor(store, undefined, { createWorkspace: (path) => createWorkbench(path, { trash: (file) => rename(file, join(trashDir, basename(file))), move: rename }) });
+  await new Promise((resolve) => server.listen(0, '127.0.0.1', resolve)); t.after(() => new Promise((resolve) => server.close(resolve)));
+  const url = `http://127.0.0.1:${server.address().port}`;
+  const q = (path, workspace = other) => new URLSearchParams({ workspace, path }).toString();
+  const defaultRoot = await (await fetch(`${url}/api/workspace-root`)).json();
+  assert.equal(defaultRoot.root, await realpath(root)); assert.equal(defaultRoot.label, await realpath(root));
+  assert.deepEqual((await (await fetch(`${url}/api/list?${q('')}`)).json()).map((item) => item.name), ['note.md']);
+  assert.equal((await fetch(`${url}/api/list?${q('outside')}`)).status, 400);
+  assert.equal((await fetch(`${url}/api/list?${q('', 'relative')}`)).status, 400);
+  const file = await (await fetch(`${url}/api/file?${q('note.md')}`)).json(); assert.equal(file.content, '# other\n');
+  const post = (route, body) => fetch(`${url}${route}`, { method: 'POST', headers: { origin: url, 'content-type': 'application/json' }, body: JSON.stringify({ workspace: other, ...body }) });
+  assert.equal((await post('/api/file', { path: 'note.md', content: '# updated\n', version: file.version })).status, 200);
+  assert.equal(await readFile(join(root, '.hidden/note.md'), 'utf8'), '# original\r\n');
+  const identity = await (await fetch(`${url}/api/entry?${q('note.md')}&kind=file`)).json();
+  assert.equal((await post('/api/entry', { action: 'rename', path: 'note.md', kind: 'file', name: 'renamed.md', version: identity.version })).status, 200);
+  const renamed = await (await fetch(`${url}/api/entry?${q('renamed.md')}&kind=file`)).json();
+  assert.equal((await post('/api/entry', { action: 'trash', path: 'renamed.md', kind: 'file', version: renamed.version })).status, 200);
+  assert.equal(await readFile(join(trashDir, 'renamed.md'), 'utf8'), '# updated\n');
+  assert.equal(await readFile(join(root, '.hidden/note.md'), 'utf8'), '# original\r\n');
+});
+
+test('HTTP lists, names and archives workspaces and creates a session', async (t) => {
+  const { root, store } = await fixture(t); const calls = [];
+  const other = join(root, 'other'); await mkdir(other); const cwd = await realpath(other);
+  const workspace = { path: cwd, name: 'Fixture', archived: false, revision: 'a'.repeat(64) };
+  const agent = {
+    listWorkspaces: async () => [workspace],
+    addWorkspace: async (path, name) => { calls.push(['workspace', path, name]); return { cwd: path, workspace }; },
+    updateWorkspace: async (path, changes, revision) => { calls.push(['update', path, changes, revision]); return { workspace: { ...workspace, ...changes } }; },
+    createSession: async (path) => { calls.push(['session', path]); return { cwd: path, key: 'new' }; },
+  };
+  const server = createServerFor(store, agent);
+  await new Promise((resolve) => server.listen(0, '127.0.0.1', resolve)); t.after(() => new Promise((resolve) => server.close(resolve)));
+  const url = `http://127.0.0.1:${server.address().port}`;
+  assert.deepEqual(await (await fetch(`${url}/api/agent/workspaces`)).json(), [workspace]);
+  const post = (route, body) => fetch(`${url}/api/agent/${route}`, { method: 'POST', headers: { origin: url, 'content-type': 'application/json' }, body: JSON.stringify(body) });
+  let response = await post('workspaces', { cwd, name: 'Fixture' }); assert.equal(response.status, 200); assert.deepEqual(await response.json(), { cwd, workspace });
+  response = await post('workspaces', { action: 'update', cwd, changes: { archived: true }, revision: workspace.revision });
+  assert.equal(response.status, 200); assert.equal((await response.json()).workspace.archived, true);
+  response = await post('new', { cwd }); assert.equal(response.status, 200); assert.deepEqual(await response.json(), { cwd, key: 'new' });
+  assert.equal((await post('workspaces', { cwd: await realpath(root), name: 'Default' })).status, 400);
+  assert.equal((await post('workspaces', { action: 'update', cwd: await realpath(root), changes: { archived: true }, revision: workspace.revision })).status, 400);
+  assert.deepEqual(calls, [['workspace', cwd, 'Fixture'], ['update', cwd, { archived: true }, workspace.revision], ['session', cwd]]);
+});
+
 test('HTTP reload targets only the open session', async (t) => {
   const { store } = await fixture(t); const calls = [];
   const agent = { snapshot: () => ({ key: 'current' }), reload: async (key) => { calls.push(key); return { key, reloading: false }; } };
@@ -105,6 +154,8 @@ test('HTTP rejects cross-origin writes and foreign host headers', async (t) => {
   assert.equal((await fetch(`${url}/api/agent/send`, { method: 'POST', headers: { origin: 'https://attacker.example', 'content-type': 'application/json' }, body: '{}' })).status, 403);
   assert.equal((await fetch(`${url}/api/agent/archive`, { method: 'POST', headers: { origin: 'https://attacker.example', 'content-type': 'application/json' }, body: '{}' })).status, 403);
   assert.equal((await fetch(`${url}/api/agent/reload`, { method: 'POST', headers: { origin: 'https://attacker.example', 'content-type': 'application/json' }, body: '{}' })).status, 403);
+  assert.equal((await fetch(`${url}/api/agent/new`, { method: 'POST', headers: { origin: 'https://attacker.example', 'content-type': 'application/json' }, body: '{}' })).status, 403);
+  assert.equal((await fetch(`${url}/api/agent/workspaces`, { method: 'POST', headers: { origin: 'https://attacker.example', 'content-type': 'application/json' }, body: '{}' })).status, 403);
   assert.equal((await fetch(`${url}/api/agent/state`, { headers: { origin: 'https://attacker.example' } })).status, 403);
   assert.equal(agentCalls, 0);
   assert.equal((await fetch(`${url}/api/agent/send`, { method: 'POST', headers: { origin: url, 'content-type': 'application/json' }, body: JSON.stringify({ id: 'stale', message: 'fixture' }) })).status, 400);

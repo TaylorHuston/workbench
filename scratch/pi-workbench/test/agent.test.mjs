@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdtemp, mkdir, readFile, writeFile, rm, stat } from 'node:fs/promises';
+import { mkdtemp, mkdir, readFile, realpath, writeFile, rm, stat } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { Type } from 'typebox';
@@ -49,7 +49,7 @@ function run(host, message) {
 test('discovers a native Pi session, streams and continues it with earlier context', async (t) => {
   const { cwd, faux, options, seed, getCalls } = await setup(t); await seed();
   const host = createAgentHost(options); const sessions = await host.list();
-  assert.equal(sessions.length, 1); assert.equal(sessions[0].cwd, cwd);
+  assert.equal(sessions.length, 1); assert.equal(sessions[0].cwd, await realpath(cwd));
   faux.setResponses([fauxAssistantMessage([fauxToolCall('fixture_echo', { text: 'example' })]), fauxAssistantMessage('Synthetic response.')]);
   const opened = await host.open(sessions[0].key); assert.equal(opened.id, sessions[0].id); assert.match(opened.model, /fixture/);
   const events = await run(host, 'Fixture prompt');
@@ -64,6 +64,60 @@ test('discovers a native Pi session, streams and continues it with earlier conte
   faux.setResponses([(context) => { sawContext = JSON.stringify(context.messages).includes('Saved fixture prompt'); return fauxAssistantMessage('Continued.'); }]);
   await run(other, 'Follow up'); assert.ok(sawContext); assert.ok(other.snapshot().messages.some((message) => message.text === 'Continued.'));
   await other.close();
+});
+
+test('creates a native session in a workspace without a model call and persists it on first message', async (t) => {
+  const { cwd, agentDir, options, seed, faux } = await setup(t); await seed(); let called = false;
+  const host = createAgentHost(options); const events = []; const canonical = await realpath(cwd);
+  const unsubscribe = host.subscribe((event) => events.push(event));
+  faux.setResponses([() => { called = true; return fauxAssistantMessage('New session response.'); }]);
+  const opened = await host.createSession(cwd);
+  assert.equal(called, false); assert.equal(opened.cwd, canonical); assert.deepEqual(opened.messages, []);
+  let listed = await host.list(); const draft = listed.find((item) => item.id === opened.id);
+  assert.ok(draft?.transient); assert.equal(draft.name, 'New session');
+  await run(host, 'First message'); assert.equal(called, true);
+  listed = await host.list(); const saved = listed.find((item) => item.id === opened.id);
+  assert.ok(saved && !saved.transient); assert.equal(saved.cwd, canonical); assert.match(saved.name, /First message/);
+  const group = `--${canonical.replace(/^[/\\\\]/, '').replace(/[/\\\\:]/g, '-')}--`;
+  const native = await SessionManager.listAll(join(agentDir, 'sessions', group)); assert.ok(native.some((item) => item.id === opened.id));
+  assert.ok(events.some((event) => event.type === 'sessions_changed')); unsubscribe(); await host.close();
+  const other = createAgentHost(options); const resumed = await other.open(saved.key);
+  assert.ok(resumed.messages.some((item) => item.text === 'First message')); await other.close();
+});
+
+test('retains empty registered workspaces and leaves an empty session unpersisted on close', async (t) => {
+  const { cwd, options } = await setup(t); const host = createAgentHost(options); const canonical = await realpath(cwd);
+  assert.deepEqual(await host.listWorkspaces(), []);
+  const registration = await host.addWorkspace(cwd); assert.equal(registration.cwd, canonical);
+  assert.equal(registration.workspace.path, canonical); assert.equal(registration.workspace.archived, false);
+  assert.deepEqual(await host.addWorkspace(cwd), registration);
+  const other = createAgentHost(options); assert.deepEqual(await other.listWorkspaces(), [registration.workspace]);
+  const opened = await host.createSession(cwd); assert.ok((await host.list()).some((item) => item.id === opened.id && item.transient));
+  await host.close(); assert.deepEqual(await host.list(), []); assert.deepEqual(await host.listWorkspaces(), [registration.workspace]);
+  await assert.rejects(host.addWorkspace('relative'), /absolute/);
+  await assert.rejects(host.createSession('relative'), /absolute/);
+});
+
+test('renames and archives a workspace without altering its Pi session or runtime', async (t) => {
+  const { cwd, agentDir, options, seed } = await setup(t); await seed(); const host = createAgentHost(options);
+  const registration = await host.addWorkspace(cwd, 'Friendly'); const [saved] = await host.list(); const opened = await host.open(saved.key);
+  const [info] = await SessionManager.listAll(join(agentDir, 'sessions', 'project-group')); const original = await readFile(info.path);
+  const renamed = await host.updateWorkspace(registration.cwd, { name: 'New name' }, registration.workspace.revision);
+  const archived = await host.updateWorkspace(registration.cwd, { archived: true }, renamed.workspace.revision);
+  assert.equal(archived.workspace.name, 'New name'); assert.equal(archived.workspace.archived, true);
+  assert.equal(host.snapshot().id, opened.id); assert.deepEqual(await readFile(info.path), original);
+  assert.equal((await host.list())[0].archived, false);
+  const restored = await host.updateWorkspace(registration.cwd, { archived: false }, archived.workspace.revision);
+  assert.equal(restored.workspace.archived, false); assert.deepEqual(await readFile(info.path), original); await host.close();
+});
+
+test('preserves the open session if a new session cannot be created', async (t) => {
+  const { cwd, options, seed } = await setup(t); await seed(); let fail = false;
+  const host = createAgentHost({ ...options, makeSession: async (args) => { if (fail) throw new Error('Synthetic initialization failure'); return options.makeSession(args); } });
+  const [saved] = await host.list(); const opened = await host.open(saved.key); fail = true;
+  await assert.rejects(host.createSession(cwd), /Synthetic initialization failure/);
+  assert.equal(host.snapshot().id, opened.id); assert.equal(host.snapshot().key, saved.key);
+  const other = createAgentHost(options); await assert.rejects(other.open(saved.key), /already in use/); await host.close();
 });
 
 test('lists sessions directly in the native root and distinguishes their file keys', async (t) => {
@@ -280,11 +334,12 @@ test('does not activate unavailable recorded extension tools when restoring', as
 });
 
 test('refuses reload while a run is active or the session key is stale', async (t) => {
-  const { faux, options, seed } = await setup(t, { tokensPerSecond: 30 }); await seed(); const host = createAgentHost(options);
+  const { cwd, faux, options, seed } = await setup(t, { tokensPerSecond: 30 }); await seed(); const host = createAgentHost(options);
   faux.setResponses([fauxAssistantMessage('Slow synthetic response. '.repeat(100))]);
   const [saved] = await host.list(); await host.open(saved.key);
   await assert.rejects(host.reload('0'.repeat(64)), /Session changed/);
   host.send('Running'); await assert.rejects(host.reload(saved.key), /Stop the current run/);
+  await assert.rejects(host.createSession(cwd), /Stop the current run/);
   await host.stop(); await host.close();
 });
 

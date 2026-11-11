@@ -2,7 +2,7 @@ import { createServer } from 'node:http';
 import { promises as fs } from 'node:fs';
 import { createHash } from 'node:crypto';
 import { homedir } from 'node:os';
-import { dirname, join, resolve, sep } from 'node:path';
+import { dirname, isAbsolute, join, resolve, sep } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { execFile } from 'node:child_process';
 import { promisify } from 'node:util';
@@ -121,30 +121,59 @@ export async function createWorkbench(root, { trash = macTrash, move = macRename
       return { ok: true };
     });
   }
-  return { list, read, save, inspect, create, rename, remove };
+  return { root: base, list, read, save, inspect, create, rename, remove };
 }
 
-export function createServerFor(workbench, agent) {
+export function createServerFor(workbench, agent, { createWorkspace = createWorkbench } = {}) {
+  const roots = new Map([[workbench.root, Promise.resolve(workbench)]]);
+  let writes = Promise.resolve();
+  const serialize = (action) => { const operation = writes.then(action); writes = operation.catch(() => {}); return operation; };
+  async function workspace(path) {
+    if (path == null || path === workbench.root) return workbench;
+    if (typeof path !== 'string' || !isAbsolute(path)) throw new Error('Invalid workspace');
+    const canonical = await fs.realpath(path);
+    if (!(await fs.stat(canonical)).isDirectory()) throw new Error('Workspace must be an existing folder');
+    if (!roots.has(canonical)) roots.set(canonical, createWorkspace(canonical));
+    const pending = roots.get(canonical);
+    try { return await pending; }
+    catch (error) { if (roots.get(canonical) === pending) roots.delete(canonical); throw error; }
+  }
   return createServer(async (req, res) => {
     const expectedHost = `127.0.0.1:${req.socket.localPort}`;
     if (req.headers.host !== expectedHost || (req.headers.origin && req.headers.origin !== `http://${expectedHost}`)) return json(res, 403, { error: 'Origin not allowed' });
     const url = new URL(req.url, `http://${expectedHost}`);
     try {
+      if (req.method === 'GET' && url.pathname === '/api/workspace-root') {
+        const piRoot = await fs.realpath(join(homedir(), '.pi')).catch(() => null);
+        return json(res, 200, { root: workbench.root, label: workbench.root === piRoot ? '~/.pi' : workbench.root });
+      }
       if (agent && req.method === 'GET' && url.pathname === '/api/agent/state') return json(res, 200, agent.snapshot());
       if (agent && req.method === 'GET' && url.pathname === '/api/agent/sessions') return json(res, 200, await agent.list());
+      if (agent && req.method === 'GET' && url.pathname === '/api/agent/workspaces') return json(res, 200, await agent.listWorkspaces());
       if (agent && req.method === 'GET' && url.pathname === '/api/agent/events') {
         res.writeHead(200, { 'Content-Type': 'text/event-stream', 'Cache-Control': 'no-store', Connection: 'keep-alive', 'X-Content-Type-Options': 'nosniff' });
         const unsubscribe = agent.subscribe((event) => res.write(`data: ${JSON.stringify(event)}\n\n`));
         req.on('close', unsubscribe); return;
       }
-      if (req.method === 'GET' && url.pathname === '/api/list') return json(res, 200, await workbench.list(url.searchParams.get('path') ?? ''));
-      if (req.method === 'GET' && url.pathname === '/api/file') return json(res, 200, await workbench.read(url.searchParams.get('path') ?? ''));
-      if (req.method === 'GET' && url.pathname === '/api/entry') return json(res, 200, await workbench.inspect(url.searchParams.get('path') ?? '', url.searchParams.get('kind')));
+      if (req.method === 'GET' && url.pathname === '/api/list') return json(res, 200, await (await workspace(url.searchParams.get('workspace'))).list(url.searchParams.get('path') ?? ''));
+      if (req.method === 'GET' && url.pathname === '/api/file') return json(res, 200, await (await workspace(url.searchParams.get('workspace'))).read(url.searchParams.get('path') ?? ''));
+      if (req.method === 'GET' && url.pathname === '/api/entry') return json(res, 200, await (await workspace(url.searchParams.get('workspace'))).inspect(url.searchParams.get('path') ?? '', url.searchParams.get('kind')));
       if (req.method === 'POST' && (url.pathname === '/api/file' || url.pathname === '/api/entry' || (agent && url.pathname.startsWith('/api/agent/')))) {
         if (req.headers.origin !== `http://${expectedHost}` || !req.headers['content-type']?.startsWith('application/json')) return json(res, 403, { error: 'Origin not allowed' });
         req.setEncoding('utf8');
         let data = ''; for await (const chunk of req) { data += chunk; if (data.length > 10_000_000) return json(res, 413, { error: 'File too large' }); }
-        const { path, content, version, action, parent, name, kind, key, message, archived } = JSON.parse(data);
+        const { path, content, version, action, parent, name, kind, key, message, archived, cwd, changes, revision, workspace: workspacePath } = JSON.parse(data);
+        if (url.pathname === '/api/agent/workspaces') {
+          if (typeof cwd !== 'string' || !isAbsolute(cwd)) throw new Error('Enter an absolute working directory');
+          if (action === 'update') {
+            if (cwd === workbench.root) throw new Error('The default workspace cannot be changed');
+            return json(res, 200, await agent.updateWorkspace(cwd, changes, revision));
+          }
+          if (action !== undefined && action !== 'add') throw new Error('Invalid workspace action');
+          if (await fs.realpath(cwd) === workbench.root) throw new Error('The default workspace is already available');
+          return json(res, 200, await agent.addWorkspace(cwd, name));
+        }
+        if (url.pathname === '/api/agent/new') return json(res, 200, await agent.createSession(cwd));
         if (url.pathname === '/api/agent/archive') return json(res, 200, await agent.setArchived(key, archived));
         if (url.pathname === '/api/agent/open') return json(res, 200, await agent.open(key));
         if (['/api/agent/close', '/api/agent/reload', '/api/agent/send', '/api/agent/stop'].includes(url.pathname) && (typeof key !== 'string' || agent.snapshot()?.key !== key)) throw new Error('Session changed; review the active session before retrying');
@@ -153,10 +182,11 @@ export function createServerFor(workbench, agent) {
         if (url.pathname === '/api/agent/send') return json(res, 200, agent.send(message));
         if (url.pathname === '/api/agent/stop') { await agent.stop(); return json(res, 200, { ok: true }); }
         if (url.pathname.startsWith('/api/agent/')) return json(res, 404, { error: 'Not found' });
-        if (url.pathname === '/api/file') return json(res, 200, await workbench.save(path, content, version));
-        if (action === 'create') return json(res, 200, await workbench.create(parent, name, kind));
-        if (action === 'rename') return json(res, 200, await workbench.rename(path, kind, name, version));
-        if (action === 'trash') return json(res, 200, await workbench.remove(path, kind, version));
+        const store = await workspace(workspacePath);
+        if (url.pathname === '/api/file') return json(res, 200, await serialize(() => store.save(path, content, version)));
+        if (action === 'create') return json(res, 200, await serialize(() => store.create(parent, name, kind)));
+        if (action === 'rename') return json(res, 200, await serialize(() => store.rename(path, kind, name, version)));
+        if (action === 'trash') return json(res, 200, await serialize(() => store.remove(path, kind, version)));
         throw new Error('Invalid action');
       }
       if (req.method !== 'GET') return json(res, 404, { error: 'Not found' });
