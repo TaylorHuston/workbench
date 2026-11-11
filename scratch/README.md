@@ -11,5 +11,6 @@ In-progress experiments, technical spikes, proofs of concept, and disposable cod
 - [`workflow-spec-playground/`](workflow-spec-playground/) — Open Workflow Specification diagram and DSL experiment
 - [`pkm-api/`](pkm-api/) — composable REST API spike for controlled PKM workflows
 - [`terraform-test/`](terraform-test/) — small Terraform practice configurations
+- [`pi-experiments/`](pi-experiments/) — experiments with Pi extensions
 
 Scratch is the default home for new exploratory work. When an experiment becomes durable, either refine it into a canonical example under [`../reference/`](../reference/) or graduate it to a standalone repository.
