@@ -109,6 +109,19 @@ test('creates a native session in a workspace without a model call and persists 
   assert.ok(resumed.messages.some((item) => item.text === 'First message')); await other.close();
 });
 
+test('renames the active session through Pi and preserves a transient name on first message', async (t) => {
+  const { cwd, options, faux } = await setup(t); const host = createAgentHost(options);
+  const opened = await host.createSession(cwd);
+  assert.throws(() => host.rename('wrong', 'Other'), /Session changed/);
+  assert.throws(() => host.rename(opened.key, '  '), /Enter a session name/);
+  assert.throws(() => host.rename(opened.key, 'bad\nname'), /Enter a session name/);
+  assert.deepEqual(host.rename(opened.key, '  Research  '), { name: 'Research' });
+  let listed = await host.list(); assert.equal(listed[0].name, 'Research'); assert.equal(listed[0].transient, true);
+  faux.setResponses([fauxAssistantMessage('Done.')]); await run(host, 'First message');
+  listed = await host.list(); assert.equal(listed[0].name, 'Research'); assert.ok(!listed[0].transient);
+  await host.close(); await host.open(opened.key); assert.equal((await host.list())[0].name, 'Research'); await host.close();
+});
+
 test('retains empty registered workspaces and leaves an empty session unpersisted on close', async (t) => {
   const { cwd, options } = await setup(t); const host = createAgentHost(options); const canonical = await realpath(cwd);
   assert.deepEqual(await host.listWorkspaces(), []);

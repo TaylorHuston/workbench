@@ -12,7 +12,7 @@ cp server.mjs agent.mjs archive.mjs workspaces.mjs extension-ui.mjs test/markdow
 ln -s "$PWD/node_modules" "$tmp/app/node_modules"
 printf '# First note\n' > "$tmp/files/first.md"
 printf '# Second note\n' > "$tmp/files/second.md"
-env -i PATH="$PATH" HOME="$tmp/home" PI_CODING_AGENT_DIR="$tmp/home/agent" PI_OFFLINE=1 FIXTURE_ROOT="$tmp/files" FIXTURE_SESSIONS=1 PORT_FILE="$tmp/port" node "$tmp/app/markdown-fixture-server.mjs" > "$tmp/server.log" 2>&1 & pid=$!
+env -i PATH="$PATH" HOME="$tmp/home" PI_CODING_AGENT_DIR="$tmp/home/agent" PI_OFFLINE=1 FIXTURE_ROOT="$tmp/files" FIXTURE_SESSIONS=1 FIXTURE_DELAY_SNAPSHOT=1 PORT_FILE="$tmp/port" node "$tmp/app/markdown-fixture-server.mjs" > "$tmp/server.log" 2>&1 & pid=$!
 i=0; while [ ! -s "$tmp/port" ]; do i=$((i+1)); [ "$i" -le 10 ] || exit 1; sleep 1; done
 read -r port < "$tmp/port" || true
 base="http://127.0.0.1:$port"; one=$(printf '%064d' 0 | tr '0' 'a'); two=$(printf '%064d' 0 | tr '0' 'b'); three=$(printf '%064d' 0 | tr '0' 'c')
@@ -21,7 +21,31 @@ agent-browser --session "$session" wait --fn "document.querySelector('#session-s
 result=$(agent-browser --session "$session" eval "(() => { const f=document.querySelector('#files-view').getBoundingClientRect(), a=document.querySelector('#agent-view').getBoundingClientRect(); return f.width>0 && a.width>0 && a.left>=f.right-1; })()")
 [ "$result" = true ] || { echo 'Editor and session are not side by side' >&2; exit 1; }
 agent-browser --session "$session" select '#session-select' "$one" >/dev/null
+agent-browser --session "$session" wait --fn "new URL(location.href).searchParams.get('session') === '$one' && document.querySelector('#agent-status').textContent === 'Ready'" >/dev/null
+agent-browser --session "$session" eval "document.querySelector('#session-select').add(new Option('Locked fixture', 'd'.repeat(64))); true" >/dev/null
+locked=$(printf '%064d' 0 | tr '0' 'd')
+agent-browser --session "$session" select '#session-select' "$locked" >/dev/null
+agent-browser --session "$session" wait --fn "document.querySelector('#agent-status').textContent.includes('stale Workbench lock')" >/dev/null
+agent-browser --session "$session" select '#session-select' "$one" >/dev/null
+agent-browser --session "$session" wait --fn "!document.querySelector('#agent-status').textContent.includes('stale Workbench lock')" >/dev/null
+agent-browser --session "$session" click '#session-manage' >/dev/null
+agent-browser --session "$session" wait --fn "!document.querySelector('#session-manager').hidden && document.querySelector('#session-manage').getAttribute('aria-expanded') === 'true'" >/dev/null
+agent-browser --session "$session" screenshot /tmp/pi-workbench-session-menu.png >/dev/null
+agent-browser --session "$session" eval "window.prompt=()=> 'Renamed session'; true" >/dev/null
+agent-browser --session "$session" click '#session-rename' >/dev/null
+agent-browser --session "$session" wait --fn "document.querySelector('#session-select').selectedOptions[0].textContent === 'Renamed session'" >/dev/null
+agent-browser --session "$session" click '#agent-reload' >/dev/null
+agent-browser --session "$session" wait --fn "document.querySelector('#agent-status').textContent === 'Ready'" >/dev/null
+agent-browser --session "$session" click '#session-archive-current' >/dev/null
+agent-browser --session "$session" wait --fn "document.querySelector('#session-archive-current').textContent === 'Restore' && document.querySelector('.archived-sessions')" >/dev/null
+agent-browser --session "$session" select '#session-select' "$two" >/dev/null
+agent-browser --session "$session" wait --fn "new URL(location.href).searchParams.get('session') === '$two'" >/dev/null
+agent-browser --session "$session" click '.archived-sessions summary' >/dev/null
+agent-browser --session "$session" click '.archived-sessions .session-archive' >/dev/null
+agent-browser --session "$session" wait --fn "!document.querySelector('.archived-sessions') && [...document.querySelector('#session-select').options].some(option => option.value === '$one')" >/dev/null
+agent-browser --session "$session" select '#session-select' "$one" >/dev/null
 agent-browser --session "$session" wait --fn "new URL(location.href).searchParams.get('session') === '$one'" >/dev/null
+agent-browser --session "$session" click '#session-manage' >/dev/null
 agent-browser --session "$session" find text 'second.md' click --exact >/dev/null
 agent-browser --session "$session" wait --fn "document.querySelector('#filename').textContent === 'second.md' && new URL(location.href).searchParams.get('session') === '$one'" >/dev/null
 agent-browser --session "$session" screenshot /tmp/pi-workbench-session-layout.png >/dev/null
@@ -92,7 +116,7 @@ agent-browser --session "$session" wait --fn "new URL(location.href).searchParam
 agent-browser --session "$session" select '#session-select' "$one" >/dev/null
 agent-browser --session "$session" wait --fn "document.querySelector('#filename').textContent === 'second.md'" >/dev/null
 agent-browser --session "$session" reload >/dev/null
-agent-browser --session "$session" wait --fn "document.querySelector('#filename').textContent === 'second.md' && new URL(location.href).searchParams.get('session') === '$one'" >/dev/null
+agent-browser --session "$session" wait --fn "document.querySelector('#filename').textContent === 'second.md' && new URL(location.href).searchParams.get('session') === '$one' && !document.querySelector('#agent-status').textContent.includes('stale Workbench lock')" >/dev/null
 agent-browser --session "$session" eval "localStorage.setItem('pi-workbench:session-document:$two', '{bad'); true" >/dev/null
 agent-browser --session "$session" select '#session-select' "$two" >/dev/null
 agent-browser --session "$session" wait --fn "document.querySelector('#document-status').textContent.includes('Could not read') && document.querySelector('#filename').textContent === 'second.md'" >/dev/null

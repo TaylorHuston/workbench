@@ -10,20 +10,18 @@
     <aside class="sidebar" aria-label="Workbench navigation">
       <header class="brand"><span class="brand-mark" aria-hidden="true">π</span><strong>Pi Workbench</strong><button id="theme-toggle" type="button" aria-label="Switch to dark mode" title="Switch to dark mode" aria-pressed="false"><svg class="theme-moon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M20.9 13A9 9 0 0 1 11 3.1 9 9 0 1 0 20.9 13Z"/></svg><svg class="theme-sun" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" aria-hidden="true"><circle cx="12" cy="12" r="4"/><path d="M12 2v2m0 16v2M4.93 4.93l1.42 1.42m11.3 11.3 1.42 1.42M2 12h2m16 0h2M4.93 19.07l1.42-1.42m11.3-11.3 1.42-1.42"/></svg></button></header>
       <div class="workspace-picker"><label class="sr-only" for="workspace-select">Workspace</label><select id="workspace-select" disabled><option>Loading workspaces…</option></select><button id="workspace-add" type="button" title="Add workspace" aria-label="Add workspace" disabled>+</button><button id="workspace-manage" type="button" title="Manage workspaces" aria-label="Manage workspaces" aria-expanded="false" disabled>⋯</button></div><p id="workspace-status" class="tree-status" role="status" aria-live="polite"></p><div id="workspace-manager" class="workspace-manager" hidden><div id="workspace-manager-list"></div></div>
-      <div class="workspace-picker session-picker"><label class="sr-only" for="session-select">Session</label><select id="session-select" disabled><option value="">Choose a session…</option></select><button id="session-new" type="button" title="New session in this workspace" aria-label="New session">+</button></div>
-      <p id="agent-status" class="agent-status" role="status" aria-live="polite"></p><div id="session-runtime" class="session-runtime" hidden><span id="agent-model"></span><button id="agent-reload" type="button" title="Reload this session’s skills and settings" aria-label="Reload session" disabled>↻</button><button id="agent-close" type="button" title="Close the Workbench runtime without archiving or deleting the session" disabled>Close session</button></div>
-      <nav class="sidebar-tabs" aria-label="Sidebar views"><button id="files-tab" type="button" aria-pressed="true">Files</button><button id="agent-tab" type="button" aria-pressed="false">Manage sessions</button></nav>
+      <div class="workspace-picker session-picker"><label class="sr-only" for="session-select">Session</label><select id="session-select" disabled><option value="">Choose a session…</option></select><button id="session-new" type="button" title="New session in this workspace" aria-label="New session">+</button><button id="session-manage" type="button" title="Manage session" aria-label="Manage session" aria-expanded="false">⋯</button></div>
+      <div id="session-manager" class="workspace-manager session-manager" hidden>
+        <span id="agent-model"></span><div class="session-manager-actions"><button id="session-rename" type="button">Rename</button><button id="agent-reload" type="button">Reload</button><button id="session-archive-current" type="button">Archive</button><button id="agent-close" type="button">Close session</button><button id="session-refresh" type="button">Refresh list</button></div>
+        <p id="session-list-status" class="tree-status" role="status" aria-live="polite"></p><div id="session-list"></div>
+      </div>
+      <p id="agent-status" class="agent-status" role="status" aria-live="polite"></p>
       <div id="explorer-panel" class="sidebar-panel">
       <div class="explorer-heading"><span>Files</span><button id="refresh" title="Refresh file tree" aria-label="Refresh file tree">↻</button></div>
       <button class="root-label" id="select-root" type="button"><span class="folder-icon" aria-hidden="true"></span><span id="root-name">~/.pi</span><span class="root-tag">root folder</span></button>
       <div class="tree-actions" aria-label="File actions"><button id="new-file" type="button" disabled>New file</button><button id="new-folder" type="button" disabled>New folder</button></div>
       <p id="selection" class="selection" title="Selected location">Selected: ~/.pi</p><p id="status" class="tree-status" role="status" aria-live="polite"></p><p id="tree-status" class="tree-status" role="status" aria-live="polite"></p>
       <nav id="tree" aria-label="Markdown files"></nav>
-      </div>
-      <div id="sessions-panel" class="sidebar-panel" hidden>
-        <div class="explorer-heading"><span>Sessions</span><div class="workspace-actions"><button id="session-refresh" title="Refresh sessions and workspaces" aria-label="Refresh sessions and workspaces">↻</button></div></div>
-        <p id="session-list-status" class="tree-status" role="status" aria-live="polite"></p>
-        <nav id="session-list" aria-label="Sessions in selected workspace"></nav>
       </div>
       <footer class="sidebar-footer">Local files · explicit save</footer>
     </aside>

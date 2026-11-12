@@ -13,10 +13,13 @@ const agent = {
   snapshot: () => active,
   listWorkspaces: async () => other ? [{ id: createHash('sha256').update(other).digest('hex'), path: other, name: 'Other workspace', archived: false, revision: 'fixture' }] : [],
   list: async () => fixtures,
-  open: async (key) => { const entry = fixtures.find(item => item.key === key); if (!entry) throw new Error('Session not found'); active = { ...entry, messages: [], model: 'fixture', tools: [], busy: false }; publish(); return active; },
+  open: async (key) => { if (key === 'd'.repeat(64) || active?.key === key) throw new Error('Session is already in use or has a stale Workbench lock; inspect the lock before recovery'); const entry = fixtures.find(item => item.key === key); if (!entry) throw new Error('Session not found'); active = { ...entry, messages: [], model: 'fixture', tools: [], busy: false, warning: '1 skill discovery warning(s). Global extensions are active. Basic dialogs are supported; custom terminal UI is not.' }; publish(); return active; },
   createSession: async () => { fixtures.push({ key: keys[2], cwd: fixtureRoot, name: 'New session', archived: false }); return agent.open(keys[2]); },
+  rename: (key, name) => { const entry = fixtures.find(item => item.key === key); if (!entry || active?.key !== key) throw new Error('Session changed'); entry.name = name; return { name }; },
+  reload: async key => { if (active?.key !== key) throw new Error('Session changed'); publish(); return active; },
+  setArchived: async (key, archived) => { const entry = fixtures.find(item => item.key === key); if (!entry) throw new Error('Session not found'); entry.archived = archived; for (const listener of listeners) listener({ type: 'archives_changed', key, archived }); return { ok: true }; },
   send: (message, document) => { if (message !== 'fixture question' || document !== 'second.md') throw new Error('Unexpected fixture prompt context'); return { accepted: true }; },
-  subscribe: (listener) => { listeners.add(listener); listener({ type: 'snapshot', value: active }); return () => listeners.delete(listener); },
+  subscribe: (listener) => { listeners.add(listener); if (process.env.FIXTURE_DELAY_SNAPSHOT) setTimeout(() => { if (listeners.has(listener)) listener({ type: 'snapshot', value: active }); }, 1200); else listener({ type: 'snapshot', value: active }); return () => listeners.delete(listener); },
 };
 const store = await createWorkbench(process.env.FIXTURE_ROOT, { move: rename });
 if (process.env.DELAY_FILE) {

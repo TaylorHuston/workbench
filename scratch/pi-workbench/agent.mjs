@@ -83,7 +83,7 @@ export function createAgentHost({ agentDir = getAgentDir(), stateDir = join(agen
     const canonical = new Map(await Promise.all(directories.map(async (cwd) => [cwd, await fs.realpath(cwd).catch(() => cwd)])));
     const result = sessions.map((info) => ({ key: keyFor(info.path), id: info.id, cwd: canonical.get(info.cwd) ?? info.cwd, name: info.name || info.firstMessage || 'Untitled session', modified: info.modified, archived: Object.hasOwn(archived, keyFor(info.path)) }));
     // Pi creates the JSONL only on the first message; show a new empty session while it is open.
-    if (active?.createdHere && !result.some((item) => item.key === active.key)) result.unshift({ key: active.key, id: active.session.sessionId, cwd: active.cwd, name: 'New session', modified: active.createdAt, archived: false, transient: true });
+    if (active?.createdHere && !result.some((item) => item.key === active.key)) result.unshift({ key: active.key, id: active.session.sessionId, cwd: active.cwd, name: active.session.sessionManager.getSessionName() || 'New session', modified: active.createdAt, archived: false, transient: true });
     return result;
   }
   async function setArchived(key, archived) {
@@ -232,6 +232,14 @@ export function createAgentHost({ agentDir = getAgentDir(), stateDir = join(agen
     if (failure) { publish({ type: 'error', message: failure.message }); throw failure; }
     return snapshot();
   }
+  function rename(key, name) {
+    if (!active || active.key !== key) throw new Error('Session changed; review the active session before retrying');
+    if (busy || opening) throw new Error('Finish the current run before renaming the session');
+    if (typeof name !== 'string' || !name.trim() || /[\r\n]/.test(name) || name.trim().length > 200) throw new Error('Enter a session name of at most 200 characters');
+    active.session.setSessionName(name.trim());
+    publish({ type: 'sessions_changed' });
+    return { name: active.session.sessionManager.getSessionName() };
+  }
   function send(message, document = null) {
     if (!active) throw new Error('Open a session first');
     if (active.unsafe) throw new Error('Extension failure or incomplete reload; close and reopen the session before continuing');
@@ -263,5 +271,5 @@ export function createAgentHost({ agentDir = getAgentDir(), stateDir = join(agen
     } catch (error) { throw new Error(`Workspace update failed or is uncertain; refresh and inspect before retrying. ${error.message}`); }
   }
   function createSession(cwd) { if (typeof cwd !== 'string') throw new Error('Enter an absolute working directory'); return open(undefined, cwd); }
-  return { list, open, close, reload, send, stop, snapshot, subscribe, respondDialog: dialogs.respond, setArchived, listWorkspaces: workspaces.list, addWorkspace, updateWorkspace, createSession };
+  return { list, open, close, reload, rename, send, stop, snapshot, subscribe, respondDialog: dialogs.respond, setArchived, listWorkspaces: workspaces.list, addWorkspace, updateWorkspace, createSession };
 }

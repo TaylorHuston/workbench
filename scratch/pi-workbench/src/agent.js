@@ -22,21 +22,22 @@ function row(role, text) {
 }
 function controls() {
   const running = !!state?.busy, reloading = !!state?.reloading, open = activeHere(), hasDraft = !!$('#agent-message').value.trim();
-  $('#agent-close').disabled = $('#agent-reload').disabled = !open || running || reloading;
+  const entry = open ? cachedSessions.find(item => item.key === state.key) : null;
+  $('#agent-close').disabled = $('#agent-reload').disabled = $('#session-rename').disabled = !open || running || reloading;
+  $('#session-archive-current').disabled = !open || running || reloading || !entry || !!entry.transient;
+  $('#session-archive-current').textContent = entry?.archived ? 'Restore' : 'Archive';
+  $('#session-manage').disabled = !getWorkspace() || !sessionsLoaded;
   $('#session-new').disabled = !getWorkspace() || running || reloading;
   $('#session-select').disabled = !getWorkspace() || running || reloading || !sessionsLoaded;
   $('#session-select').value = open ? state.key : '';
-  document.querySelectorAll('.session-button').forEach((button) => {
-    button.disabled = running || reloading;
-    if (open && button.dataset.key === state?.key) button.setAttribute('aria-current', 'true');
-    else button.removeAttribute('aria-current');
-  });
   $('#agent-send').disabled = !open || running || reloading || !state.model;
   $('#agent-message').disabled = running || reloading || (!open && !hasDraft) || (open && !state.model && !hasDraft);
   $('#agent-stop').disabled = !running; $('#agent-stop').hidden = !running; $('#agent-send').hidden = running;
-  $('#session-runtime').hidden = !open;
   $('#agent-model').textContent = open ? state.model ?? 'No model available' : '';
   $('#agent-model').title = open ? `${state.cwd} · Tools: ${state.tools.length ? state.tools.join(', ') : 'none'}` : '';
+}
+function visibleWarning(message) {
+  return (message || '').replace(/\b\d+ skill discovery warning\(s\)\.\s*/g, '').replace(/Global extensions are active\. Basic dialogs are supported; custom terminal UI is not\.\s*/g, '').trim();
 }
 function snapshot(value) {
   state = value; live = null; $('#agent-transcript').replaceChildren();
@@ -52,7 +53,7 @@ function snapshot(value) {
   }
   controls();
   if ($('#agent-message').value.trim() && draftSessionId && state?.key !== draftSessionId) status('Draft belongs to another session; copy or clear it before sending.');
-  else if (!lastError) status(state?.reloading ? 'Reloading…' : state?.busy ? 'Running…' : activeHere() ? state.warning || 'Ready' : '');
+  else if (!lastError) status(state?.reloading ? 'Reloading…' : state?.busy ? 'Running…' : activeHere() ? visibleWarning(state.warning) || 'Ready' : '');
 }
 const events = new EventSource('/api/agent/events');
 events.onmessage = ({ data }) => {
@@ -72,7 +73,7 @@ events.onmessage = ({ data }) => {
 events.onerror = () => { extensionDialogsDisconnected(); status('Disconnected; reconnecting…'); };
 events.onopen = () => { lastError = ''; snapshot(state); void refreshWorkspaces(); void loadSessions(); };
 
-async function action(fn) { try { lastError = ''; await fn(); } catch (error) { lastError = error.message; status(lastError); } }
+async function action(fn) { try { lastError = ''; status(''); await fn(); } catch (error) { lastError = error.message; status(lastError); } }
 async function mayChangeSession() {
   const from = state?.key, workspace = getWorkspace();
   const allowed = () => from === state?.key && workspace === getWorkspace() && !state?.busy && !state?.reloading && !$('#agent-message').value.trim();
@@ -85,45 +86,19 @@ async function mayChangeSession() {
   }
   return true;
 }
-function showView(sessions) {
-  $('#explorer-panel').hidden = sessions; $('#sessions-panel').hidden = !sessions;
-  $('#files-tab').setAttribute('aria-pressed', String(!sessions)); $('#agent-tab').setAttribute('aria-pressed', String(sessions));
-}
 function applyArchiveChange(key, archived) {
   if (!cachedSessions.some((session) => session.key === key)) { void loadSessions(); return; }
   archiveVersions.set(key, (archiveVersions.get(key) ?? 0) + 1); listGeneration++;
   cachedSessions = cachedSessions.map((session) => session.key === key ? { ...session, archived } : session);
   renderSessions();
 }
-function renderRows(parent, entries) {
-  for (const entry of entries) {
-    const container = document.createElement('div'); container.className = 'session-row';
-    const button = document.createElement('button'); button.type = 'button'; button.className = 'session-button'; button.dataset.key = entry.key;
-    const title = document.createElement('span'); title.className = 'session-title'; title.textContent = entry.name; button.title = entry.name;
-    const modified = document.createElement('small'); modified.className = 'session-date';
-    const date = new Date(entry.modified); modified.textContent = entry.transient ? 'Not saved until first message' : Number.isNaN(date.valueOf()) ? '' : date.toLocaleString();
-    button.append(title, modified);
-    button.addEventListener('click', () => action(async () => {
-      if (state?.key === entry.key) return;
-      if ($('#agent-message').value.trim()) throw new Error('Copy or clear the unsent message before switching sessions.');
-      if (!(await mayChangeSession())) return;
-      status('Opening…'); snapshot(await api('/api/agent/open', { key: entry.key }));
-      document.dispatchEvent(new CustomEvent('agent-session-selected', { detail: { key: entry.key } }));
-    }));
-    const archive = document.createElement('button'); archive.type = 'button'; archive.className = 'session-archive';
-    archive.textContent = entry.archived ? 'Restore' : 'Archive'; archive.hidden = !!entry.transient; archive.setAttribute('aria-label', `${archive.textContent} ${entry.name}`);
-    archive.title = entry.archived ? 'Return this session to the visible list' : 'Hide this session here without closing it';
-    archive.addEventListener('click', async () => {
-      const target = !entry.archived, revision = archiveVersions.get(entry.key) ?? 0;
-      archive.disabled = true; $('#session-list-status').textContent = target ? 'Archiving…' : 'Restoring…';
-      try {
-        await api('/api/agent/archive', { key: entry.key, archived: target });
-        if ((archiveVersions.get(entry.key) ?? 0) === revision) applyArchiveChange(entry.key, target);
-      } catch (error) { $('#session-list-status').textContent = error.message; }
-      finally { archive.disabled = false; }
-    });
-    container.append(button, archive); parent.append(container);
-  }
+async function changeArchived(entry, target) {
+  const revision = archiveVersions.get(entry.key) ?? 0;
+  $('#session-list-status').textContent = target ? 'Archiving…' : 'Restoring…';
+  try {
+    await api('/api/agent/archive', { key: entry.key, archived: target });
+    if ((archiveVersions.get(entry.key) ?? 0) === revision) applyArchiveChange(entry.key, target);
+  } catch (error) { $('#session-list-status').textContent = error.message; }
 }
 function renderSessions() {
   const list = $('#session-list'), notice = $('#session-list-status');
@@ -133,13 +108,21 @@ function renderSessions() {
   const visible = selected.filter((session) => !session.archived), archived = selected.filter((session) => session.archived);
   const picker = $('#session-select'); picker.replaceChildren(new Option('Choose a session…', ''));
   for (const entry of visible) picker.add(new Option(entry.name, entry.key));
-  if (activeHere() && !visible.some(entry => entry.key === state.key)) picker.add(new Option('Current session (archived)', state.key));
-  if (!visible.length) { const empty = document.createElement('p'); empty.className = 'tree-empty'; empty.textContent = 'No active sessions in this workspace.'; list.append(empty); }
-  renderRows(list, visible);
+  if (activeHere() && !visible.some(entry => entry.key === state.key)) {
+    const current = selected.find(entry => entry.key === state.key);
+    picker.add(new Option(current?.archived ? `${current.name} (archived)` : current?.name || 'Current session', state.key));
+  }
   if (archived.length) {
     const section = document.createElement('details'); section.className = 'archived-sessions'; section.open = wasExpanded;
     const summary = document.createElement('summary'); summary.textContent = `Archived (${archived.length})`; section.append(summary);
-    renderRows(section, archived); list.append(section);
+    for (const entry of archived) {
+      const row = document.createElement('div'); row.className = 'session-row';
+      const name = document.createElement('span'); name.className = 'session-title'; name.textContent = entry.name;
+      const restore = document.createElement('button'); restore.type = 'button'; restore.className = 'session-archive'; restore.textContent = 'Restore'; restore.setAttribute('aria-label', `Restore ${entry.name}`);
+      restore.addEventListener('click', async () => { restore.disabled = true; try { await changeArchived(entry, false); } finally { restore.disabled = false; } });
+      row.append(name, restore); section.append(row);
+    }
+    list.append(section);
   }
   controls(); notice.textContent = `${visible.length} active · ${archived.length} archived`;
 }
@@ -166,9 +149,26 @@ document.addEventListener('workspace-change', () => { lastError = ''; editorSess
   snapshot(state); if (sessionsLoaded) renderSessions();
   if (activeHere()) document.dispatchEvent(new CustomEvent('agent-session-reactivated', { detail: { key: state.key } }));
 }); });
-$('#files-tab').addEventListener('click', () => showView(false));
-$('#agent-tab').addEventListener('click', () => { showView(true); if (!sessionsLoaded) void loadSessions(); });
+$('#session-manage').addEventListener('click', () => {
+  const panel = $('#session-manager'); panel.hidden = !panel.hidden;
+  $('#session-manage').setAttribute('aria-expanded', String(!panel.hidden));
+  if (!panel.hidden) { lastError = ''; status(activeHere() ? visibleWarning(state.warning) || 'Ready' : ''); }
+});
 $('#session-refresh').addEventListener('click', () => { void refreshWorkspaces(); void loadSessions(); });
+$('#session-rename').addEventListener('click', () => action(async () => {
+  if (!activeHere() || state.busy || state.reloading) return;
+  const key = state.key, oldName = cachedSessions.find(item => item.key === key)?.name || 'New session';
+  const name = prompt('Session name:', oldName); if (name === null || name.trim() === oldName) return;
+  const result = await api('/api/agent/rename', { key, name });
+  cachedSessions = cachedSessions.map(item => item.key === key ? { ...item, name: result.name } : item); renderSessions();
+  status('Session renamed.');
+}));
+$('#session-archive-current').addEventListener('click', async () => {
+  const entry = activeHere() && cachedSessions.find(item => item.key === state.key);
+  if (!entry || entry.transient || state.busy || state.reloading) return;
+  const button = $('#session-archive-current'); button.disabled = true;
+  try { await changeArchived(entry, !entry.archived); } finally { controls(); }
+});
 $('#session-select').addEventListener('change', () => action(async () => {
   const key = $('#session-select').value;
   if (!key || key === state?.key) { controls(); return; }
@@ -192,6 +192,12 @@ document.addEventListener('open-session-route', (event) => { void (async () => {
     if (!entry) throw new Error('This session is unavailable or archived.');
     if (!workspaceAvailable(entry.cwd)) throw new Error('The session workspace is unavailable or archived.');
     if (state?.key === entry.key && getWorkspace() === entry.cwd) { event.detail.resolve(true); return; }
+    // The initial event-stream snapshot may not have arrived yet. Do not try to
+    // reacquire a session already owned by this Workbench process.
+    if (getWorkspace() === entry.cwd) {
+      const current = await api('/api/agent/state');
+      if (current?.key === entry.key && current.cwd === entry.cwd) { snapshot(current); event.detail.resolve(true); return; }
+    }
     if ($('#agent-message').value.trim()) throw new Error('Copy or clear the unsent message before switching sessions.');
     if (!(await mayChangeSession())) { event.detail.resolve(false); return; }
     if (getWorkspace() !== entry.cwd && !selectWorkspace(entry.cwd)) { event.detail.resolve(false); return; }

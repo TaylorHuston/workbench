@@ -163,16 +163,19 @@ test('HTTP validates active-session document context before sending', async (t) 
   assert.deepEqual(calls, [['question', '.hidden/note.md']]);
 });
 
-test('HTTP reload targets only the open session', async (t) => {
+test('HTTP reload and rename target only the open session', async (t) => {
   const { store } = await fixture(t); const calls = [];
-  const agent = { snapshot: () => ({ key: 'current' }), reload: async (key) => { calls.push(key); return { key, reloading: false }; } };
+  const agent = { snapshot: () => ({ key: 'current' }), reload: async (key) => { calls.push(key); return { key, reloading: false }; }, rename: (key, name) => { calls.push([key, name]); return { name }; } };
   const server = createServerFor(store, agent);
   await new Promise((resolve) => server.listen(0, '127.0.0.1', resolve)); t.after(() => new Promise((resolve) => server.close(resolve)));
   const url = `http://127.0.0.1:${server.address().port}`;
   const post = (key) => fetch(`${url}/api/agent/reload`, { method: 'POST', headers: { origin: url, 'content-type': 'application/json' }, body: JSON.stringify({ key }) });
   assert.equal((await post('stale')).status, 400); assert.deepEqual(calls, []);
   const response = await post('current'); assert.equal(response.status, 200); assert.deepEqual(await response.json(), { key: 'current', reloading: false });
-  assert.deepEqual(calls, ['current']);
+  const rename = (key, name) => fetch(`${url}/api/agent/rename`, { method: 'POST', headers: { origin: url, 'content-type': 'application/json' }, body: JSON.stringify({ key, name }) });
+  assert.equal((await rename('stale', 'No')).status, 400);
+  assert.equal((await rename('current', 'New name')).status, 200);
+  assert.deepEqual(calls, ['current', ['current', 'New name']]);
 });
 
 test('HTTP rejects cross-origin writes and foreign host headers', async (t) => {

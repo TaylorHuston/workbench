@@ -358,14 +358,12 @@ async function applyFileRoute(route) {
     if (getWorkspace() !== workspaceBefore || current !== fileBefore) { showWorkspaceError('Workspace changed during navigation; try again.'); return false; }
   }
   if (path !== getWorkspace() && !selectWorkspace(path)) return false;
-  if (route.path === current) { $('#files-tab').click(); return true; }
+  if (route.path === current) return true;
   if (route.path === null) {
     if (saving || opening || managing || renaming || (dirty() && !confirm('Discard unsaved changes and leave this file?'))) return false;
-    clearDocument(); select('', 'directory'); $('#files-tab').click(); return true;
+    clearDocument(); select('', 'directory'); return true;
   }
-  const opened = await openFile(route.path, undefined, prefetched);
-  if (opened) $('#files-tab').click();
-  return opened;
+  return openFile(route.path, undefined, prefetched);
 }
 document.addEventListener('workspace-ready', () => {
   const index = Number.isSafeInteger(window.history.state?.workbenchIndex) ? window.history.state.workbenchIndex : 0;
