@@ -160,6 +160,11 @@ button:focus-visible, summary:focus-visible, textarea:focus-visible, select:focu
 .cm-editor { min-height: 300px; background: transparent !important; }
 .cm-scroller { font-family: ui-monospace, SFMono-Regular, Menlo, monospace !important; font-size: 14px; line-height: 1.75; }
 .cm-content { padding: 20px 4px !important; caret-color: var(--accent); }
+#editor .cm-inline-code-delimiter .cm-formatting-inline { max-width: 4ch; opacity: 1; transform: scaleX(1); margin: 0 1px; color: var(--text); font-size: inherit; pointer-events: auto; }
+#editor .cm-table-editor th, #editor .cm-table-widget th { background-color: var(--hover); color: var(--text); }
+#editor .cm-table-editor th, #editor .cm-table-editor td, #editor .cm-table-widget th, #editor .cm-table-widget td { border-color: var(--line); }
+#editor .cm-table-toggle { background: var(--surface); color: var(--text); border-color: var(--line); }
+#editor .cm-table-inline-code { padding: 1px 3px; border-radius: 3px; background: var(--hover); color: var(--text); font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: .9em; }
 .cm-activeLine { background: var(--hover) !important; }
 :root[data-theme="dark"] .cm-editor { color: var(--text); }
 :root[data-theme="dark"] .cm-cursor { border-left-color: var(--text) !important; }

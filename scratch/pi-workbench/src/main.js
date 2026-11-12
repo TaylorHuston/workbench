@@ -1,9 +1,15 @@
-import { EditorState } from '@codemirror/state';
-import { EditorView, keymap, placeholder } from '@codemirror/view';
+import { EditorState, StateEffect } from '@codemirror/state';
+import { ensureSyntaxTree } from '@codemirror/language';
+import { EditorView, ViewPlugin, keymap, placeholder } from '@codemirror/view';
 import { defaultKeymap, history, historyKeymap } from '@codemirror/commands';
 import { markdown } from '@codemirror/lang-markdown';
 import { GFM } from '@lezer/markdown';
-import { livePreviewPlugin, markdownStylePlugin, mouseSelectingField, editorTheme } from 'codemirror-live-markdown';
+import { collapseOnSelectionFacet, livePreviewPlugin, markdownStylePlugin, mouseSelectingField, setMouseSelecting, tableEditorPlugin, editorTheme } from 'codemirror-live-markdown';
+import { codeMirrorListPreview } from './markdown/listPreview.js';
+import { inlineCodePreview } from './markdown/inlineCodePreview.js';
+import { frontmatterPreview, frontmatterTheme } from './markdown/frontmatterPreview.js';
+import { nonstandardTablePreview, nonstandardTableTheme } from './markdown/nonstandardTablePreview.js';
+import { tableCellPreview } from './markdown/tableCellPreview.js';
 import { getWorkspace, getDefaultWorkspace, getDefaultWorkspaceLabel, getWorkspaceName, showWorkspaceError } from './workspace.js';
 import './style.css';
 import './agent.js';
@@ -83,6 +89,19 @@ async function loadTree(target, path = '') {
     }
   } catch (error) { if (generation === treeGeneration && workspace === getWorkspace()) target.textContent = error.message; }
 }
+const mouseSelection = ViewPlugin.fromClass(class {
+  constructor(editor) {
+    this.editor = editor; this.disposed = false; this.dragging = false;
+    this.down = () => { this.dragging = true; editor.dispatch({ effects: setMouseSelecting.of(true) }); };
+    this.up = () => {
+      if (!this.dragging) return; this.dragging = false;
+      requestAnimationFrame(() => { if (!this.disposed && !this.dragging) editor.dispatch({ effects: setMouseSelecting.of(false) }); });
+    };
+    editor.contentDOM.addEventListener('mousedown', this.down);
+    editor.dom.ownerDocument.addEventListener('mouseup', this.up);
+  }
+  destroy() { this.disposed = true; this.editor.contentDOM.removeEventListener('mousedown', this.down); this.editor.dom.ownerDocument.removeEventListener('mouseup', this.up); }
+});
 function clearDocument() {
   view?.destroy(); view = undefined; current = undefined; original = ''; version = undefined; stale = false;
   $('#document').hidden = true; $('#empty').hidden = false; updateStatus();
@@ -96,7 +115,17 @@ async function openFile(path, button) {
     view?.destroy(); current = path; original = normalize(file.content); version = file.version; ending = file.lineEnding; stale = false;
     $('#empty').hidden = true; $('#document').hidden = false; $('#filename').textContent = path.split('/').at(-1); $('#document-path').textContent = displayPath(path);
     document.querySelectorAll('.file.active').forEach((node) => node.classList.remove('active')); button.classList.add('active'); select(path, 'file');
-    view = new EditorView({ parent: $('#editor'), state: EditorState.create({ doc: original, extensions: [history(), keymap.of([...defaultKeymap, ...historyKeymap]), markdown({ extensions: [GFM] }), EditorView.lineWrapping, EditorView.contentAttributes.of({ 'aria-label': 'Markdown source editor' }), placeholder('Start writing…'), mouseSelectingField, livePreviewPlugin, markdownStylePlugin, editorTheme, EditorView.updateListener.of((update) => { if (update.docChanged) updateStatus(); })] }) });
+    const state = EditorState.create({ doc: original, extensions: [history(), keymap.of([...defaultKeymap, ...historyKeymap]), markdown({ extensions: [GFM] }), EditorView.lineWrapping, EditorView.contentAttributes.of({ 'aria-label': 'Markdown source editor' }), placeholder('Start writing…'), collapseOnSelectionFacet.of(true), mouseSelectingField, mouseSelection, livePreviewPlugin, markdownStylePlugin, codeMirrorListPreview, inlineCodePreview, frontmatterPreview, frontmatterTheme, nonstandardTablePreview, nonstandardTableTheme, tableCellPreview, editorTheme, EditorView.updateListener.of((update) => { if (update.docChanged) updateStatus(); })] });
+    // Let the upstream table field see the complete initial syntax tree, including long documents.
+    ensureSyntaxTree(state, state.doc.length, 500);
+    view = new EditorView({ parent: $('#editor'), state: state.update({ effects: StateEffect.appendConfig.of(tableEditorPlugin()) }).state });
+    // Upstream cell editing can rewrite and lose Markdown; preview only until round-tripping is safe.
+    const blockTableEdit = (event) => {
+      if (!(event.target instanceof Element) || !event.target.closest('.cm-table-cell')) return;
+      event.preventDefault();
+      if (event.type === 'mousedown') updateStatus('Table cells are read-only. Use the MD button to edit the source.');
+    };
+    for (const event of ['mousedown', 'beforeinput', 'paste', 'drop']) view.dom.addEventListener(event, blockTableEdit, true);
     updateStatus();
   } catch (error) { updateStatus(error.message); } finally { opening = false; updateControls(); }
 }
