@@ -4,12 +4,17 @@ const manage = document.querySelector('#workspace-manage');
 const panel = document.querySelector('#workspace-manager');
 const managerList = document.querySelector('#workspace-manager-list');
 const notice = document.querySelector('#workspace-status');
-let root = null, rootLabel = '', current = null, records = [], generation = 0;
+let root = null, rootId = null, rootLabel = '', current = null, currentId = null, records = [], generation = 0, workspaceLoad;
 const pending = new Set();
 
 export const getWorkspace = () => current;
 export const getDefaultWorkspace = () => root;
 export const getDefaultWorkspaceLabel = () => rootLabel;
+export const getDefaultWorkspaceId = () => rootId;
+export const getWorkspaceId = () => current === root ? rootId : records.find((entry) => entry.path === current)?.id ?? currentId;
+export function workspacePathForId(id) { return id === rootId ? root : records.find((entry) => entry.id === id && !entry.archived)?.path; }
+export function workspaceAvailable(path) { return path === root || records.some(entry => entry.path === path && !entry.archived); }
+export function selectWorkspace(path) { return typeof path === 'string' && change(path); }
 export const getWorkspaceName = () => current === root ? rootLabel : records.find((entry) => entry.path === current)?.name ?? current?.split('/').filter(Boolean).at(-1) ?? '';
 export function showWorkspaceError(message) { notice.textContent = message; }
 async function api(body) {
@@ -18,13 +23,19 @@ async function api(body) {
   if (!response.ok) throw new Error(result.error || 'Workspace request failed');
   return result;
 }
-export async function refreshWorkspaces() {
+export function refreshWorkspaces() {
   const requested = ++generation;
-  try {
-    const result = await api();
-    if (requested !== generation) return;
-    records = result; render();
-  } catch (error) { if (requested === generation) notice.textContent = error.message; }
+  const load = (async () => {
+    try {
+      const result = await api();
+      if (requested !== generation) { if (workspaceLoad && workspaceLoad !== load) await workspaceLoad; return; }
+      records = result; render();
+    } catch (error) {
+      if (requested === generation) notice.textContent = error.message;
+      else if (workspaceLoad && workspaceLoad !== load) await workspaceLoad;
+    }
+  })();
+  workspaceLoad = load; return load;
 }
 function renderManager() {
   const expanded = managerList.querySelector('.archived-workspaces')?.open ?? false;
@@ -81,7 +92,7 @@ function change(next) {
   if (!current || next === current) { select.value = current ?? ''; return true; }
   const event = new CustomEvent('workspace-before-change', { cancelable: true, detail: { from: current, to: next } });
   if (!document.dispatchEvent(event)) { select.value = current; return false; }
-  current = next; notice.textContent = ''; render();
+  current = next; currentId = next === root ? rootId : records.find((entry) => entry.path === next)?.id; notice.textContent = ''; render();
   document.dispatchEvent(new CustomEvent('workspace-change', { detail: { workspace: next } })); return true;
 }
 async function update(entry, changes) {
@@ -118,8 +129,8 @@ add.addEventListener('click', async () => {
   try {
     const response = await fetch('/api/workspace-root'); const result = await response.json();
     if (!response.ok || typeof result.root !== 'string') throw new Error(result.error || 'Could not load the default workspace');
-    root = current = result.root; rootLabel = typeof result.label === 'string' ? result.label : root; render();
+    root = current = result.root; rootId = currentId = result.id; rootLabel = typeof result.label === 'string' ? result.label : root; render();
     document.dispatchEvent(new CustomEvent('workspace-change', { detail: { workspace: current } }));
-    await refreshWorkspaces();
+    await refreshWorkspaces(); document.dispatchEvent(new CustomEvent('workspace-ready'));
   } catch (error) { notice.textContent = error.message; }
 })();

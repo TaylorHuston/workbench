@@ -13,12 +13,12 @@ test('registers canonical named workspaces safely across concurrent requests', a
   const store = createWorkspaceStore(state), canonical = await realpath(project);
   assert.deepEqual(await store.list(), []);
   const [first, second] = await Promise.all([store.add(project, 'My Project'), store.add(join(root, 'alias'), 'My Project')]);
-  assert.deepEqual(first, second); assert.equal(first.path, canonical); assert.equal(first.name, 'My Project'); assert.equal(first.archived, false);
+  assert.deepEqual(first, second); assert.equal(first.id, hash(canonical)); assert.equal(first.path, canonical); assert.equal(first.name, 'My Project'); assert.equal(first.archived, false);
   assert.deepEqual(await store.list(), [first]);
   assert.equal((await readdir(join(state, 'workspaces'))).filter((name) => name.endsWith('.json')).length, 1);
   assert.deepEqual(await store.add(project, 'Do not overwrite'), first);
   const archived = await store.update(first.path, { archived: true }, first.revision);
-  assert.deepEqual(await store.add(project, 'Do not restore'), archived);
+  assert.equal(archived.id, first.id); assert.deepEqual(await store.add(project, 'Do not restore'), archived);
   await assert.rejects(store.add('relative'), /absolute/);
   await assert.rejects(store.add(project, '  '), /name/);
   await writeFile(join(root, 'not-a-directory'), 'fixture'); await assert.rejects(store.add(join(root, 'not-a-directory')), /existing folder/);
@@ -29,10 +29,10 @@ test('reads legacy records without rewriting and upgrades only on explicit chang
   const dir = join(root, 'workspaces'), path = '/example/legacy'; await mkdir(dir);
   const file = join(dir, `${hash(path)}.json`), raw = `${JSON.stringify({ version: 1, path })}\n`; await writeFile(file, raw);
   const store = createWorkspaceStore(root); const [legacy] = await store.list();
-  assert.deepEqual(legacy, { path, name: 'legacy', archived: false, revision: hash(raw) });
+  assert.deepEqual(legacy, { id: hash(path), path, name: 'legacy', archived: false, revision: hash(raw) });
   assert.equal(await readFile(file, 'utf8'), raw);
   const named = await store.update(path, { name: 'Friendly' }, legacy.revision);
-  assert.equal(named.name, 'Friendly'); assert.equal(named.archived, false); assert.equal(JSON.parse(await readFile(file, 'utf8')).version, 2);
+  assert.equal(named.id, legacy.id); assert.equal(named.name, 'Friendly'); assert.equal(named.archived, false); assert.equal(JSON.parse(await readFile(file, 'utf8')).version, 2);
   const archived = await store.update(path, { archived: true }, named.revision);
   assert.equal(archived.name, 'Friendly'); assert.equal(archived.archived, true);
   const restored = await store.update(path, { archived: false }, archived.revision);

@@ -32,7 +32,7 @@ async function setup(t, { tokensPerSecond = 10000 } = {}) {
   }
   return { cwd, stateDir, agentDir, modelRuntime, faux, options, seed, getCalls: () => calls };
 }
-function run(host, message) {
+function run(host, message, document = null) {
   return new Promise((resolve, reject) => {
     let started = false; const events = [];
     const timeout = setTimeout(() => { unsubscribe(); reject(new Error('Fixture run timed out')); }, 5000);
@@ -42,7 +42,7 @@ function run(host, message) {
       if (event.type === 'error') { clearTimeout(timeout); unsubscribe(); reject(new Error(event.message)); }
       if (event.type === 'snapshot' && started && !event.value?.busy) { clearTimeout(timeout); unsubscribe(); resolve(events); }
     });
-    try { host.send(message); } catch (error) { clearTimeout(timeout); unsubscribe(); reject(error); }
+    try { host.send(message, document); } catch (error) { clearTimeout(timeout); unsubscribe(); reject(error); }
   });
 }
 
@@ -64,6 +64,30 @@ test('discovers a native Pi session, streams and continues it with earlier conte
   faux.setResponses([(context) => { sawContext = JSON.stringify(context.messages).includes('Saved fixture prompt'); return fauxAssistantMessage('Continued.'); }]);
   await run(other, 'Follow up'); assert.ok(sawContext); assert.ok(other.snapshot().messages.some((message) => message.text === 'Continued.'));
   await other.close();
+});
+
+test('opens a listed session without rescanning and rejects replaced or missing session files', async (t) => {
+  const { agentDir, options, seed } = await setup(t); await seed(); await seed();
+  const host = createAgentHost(options), sessions = await host.list();
+  const files = await SessionManager.listAll(join(agentDir, 'sessions', 'project-group'));
+  const target = sessions[0], targetPath = files.find(info => info.id === target.id).path, replacementPath = files.find(info => info.id !== target.id).path;
+  const originalListAll = SessionManager.listAll; let scans = 0;
+  SessionManager.listAll = async (...args) => { scans++; return originalListAll.apply(SessionManager, args); };
+  try {
+    const opened = await host.open(target.key); assert.equal(opened.id, target.id); assert.equal(scans, 0); await host.close();
+    const replacement = await readFile(replacementPath); await writeFile(targetPath, replacement);
+    await assert.rejects(host.open(target.key), /identity changed/); assert.deepEqual(await readFile(targetPath), replacement);
+    await rm(targetPath); await assert.rejects(host.open(target.key), /not found/); assert.equal(scans, 0);
+  } finally { SessionManager.listAll = originalListAll; }
+});
+
+test('includes the active document path in model context without embedding its content', async (t) => {
+  const { cwd, faux, options } = await setup(t); const host = createAgentHost(options); await host.createSession(cwd);
+  let context; faux.setResponses([(value) => { context = JSON.stringify(value.messages); return fauxAssistantMessage('Done.'); }]);
+  await run(host, 'What is this?', 'folder/note.md');
+  assert.match(context, /folder\/note\.md/); assert.match(context, /path relative to the session working directory/);
+  assert.ok(host.snapshot().messages.some(item => item.text.includes('folder/note.md')));
+  await host.close();
 });
 
 test('creates a native session in a workspace without a model call and persists it on first message', async (t) => {

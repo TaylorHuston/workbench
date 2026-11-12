@@ -23,6 +23,18 @@ test('lists hidden directories and Markdown, excludes non-Markdown and symlinks'
   await assert.rejects(store.list('outside'), /Symbolic links/);
 });
 
+test('resolves relative links and unambiguous wikilinks without escaping the workspace', async (t) => {
+  const { root, store } = await fixture(t);
+  await writeFile(join(root, 'start.md'), '# start');
+  assert.deepEqual(await store.resolveLink('start.md', '.hidden/note.md', false), { path: '.hidden/note.md' });
+  assert.deepEqual(await store.resolveLink('start.md', 'note', true), { path: '.hidden/note.md' });
+  await writeFile(join(root, 'note.md'), '# duplicate');
+  await assert.rejects(store.resolveLink('start.md', 'note', true), /ambiguous/);
+  await assert.rejects(store.resolveLink('start.md', '../note.md', false), /outside/);
+  await assert.rejects(store.resolveLink('start.md', 'outside/note.md', false), /Symbolic/);
+  await assert.rejects(store.resolveLink('start.md', 'note#heading', true), /Unsupported/);
+});
+
 test('reads, saves and refuses stale writes without overwriting', async (t) => {
   const { root, store } = await fixture(t); const path = '.hidden/note.md';
   const first = await store.read(path); assert.equal(first.lineEnding, 'crlf'); assert.equal(first.content, '# original\r\n');
@@ -85,7 +97,7 @@ test('HTTP scopes Markdown file operations to the selected workspace', async (t)
   const url = `http://127.0.0.1:${server.address().port}`;
   const q = (path, workspace = other) => new URLSearchParams({ workspace, path }).toString();
   const defaultRoot = await (await fetch(`${url}/api/workspace-root`)).json();
-  assert.equal(defaultRoot.root, await realpath(root)); assert.equal(defaultRoot.label, await realpath(root));
+  assert.equal(defaultRoot.root, await realpath(root)); assert.equal(defaultRoot.label, await realpath(root)); assert.match(defaultRoot.id, /^[a-f0-9]{64}$/);
   assert.deepEqual((await (await fetch(`${url}/api/list?${q('')}`)).json()).map((item) => item.name), ['note.md']);
   assert.equal((await fetch(`${url}/api/list?${q('outside')}`)).status, 400);
   assert.equal((await fetch(`${url}/api/list?${q('', 'relative')}`)).status, 400);
@@ -134,6 +146,21 @@ test('HTTP accepts dialog replies during session startup and rejects cross-origi
   const post = (origin) => fetch(`${url}/api/agent/dialog`, { method: 'POST', headers: { origin, 'content-type': 'application/json' }, body: JSON.stringify({ id: 'request', value: true }) });
   assert.equal((await post('https://attacker.example')).status, 403); assert.deepEqual(calls, []);
   assert.equal((await post(url)).status, 200); assert.deepEqual(calls, [['request', true]]);
+});
+
+test('HTTP validates active-session document context before sending', async (t) => {
+  const { root, store } = await fixture(t); const calls = [];
+  const agent = { snapshot: () => ({ key: 'current', cwd: root }), send: (message, document) => { calls.push([message, document]); return { accepted: true }; } };
+  const server = createServerFor(store, agent);
+  await new Promise(resolve => server.listen(0, '127.0.0.1', resolve)); t.after(() => new Promise(resolve => server.close(resolve)));
+  const url = `http://127.0.0.1:${server.address().port}`;
+  const post = (body) => fetch(`${url}/api/agent/send`, { method: 'POST', headers: { origin: url, 'content-type': 'application/json' }, body: JSON.stringify(body) });
+  assert.equal((await post({ key: 'current', message: 'question', document: '../secret.md' })).status, 400);
+  assert.equal((await post({ key: 'current', message: 'question', document: 'outside/note.md' })).status, 400);
+  assert.equal((await post({ key: 'stale', message: 'question', document: '.hidden/note.md' })).status, 400);
+  assert.deepEqual(calls, []);
+  assert.equal((await post({ key: 'current', message: 'question', document: '.hidden/note.md' })).status, 200);
+  assert.deepEqual(calls, [['question', '.hidden/note.md']]);
 });
 
 test('HTTP reload targets only the open session', async (t) => {

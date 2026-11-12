@@ -18,7 +18,7 @@ export function createWorkspaceStore(stateDir) {
     const legacy = common && entry.version === 1 && Object.keys(entry).every((key) => ['version', 'path'].includes(key));
     const current = common && entry.version === 2 && Object.keys(entry).every((key) => ['version', 'path', 'name', 'archived'].includes(key)) && validName(entry.name) && typeof entry.archived === 'boolean';
     if (!legacy && !current) throw new Error('Workspace metadata is invalid; preserve it and inspect before recovery');
-    return { raw, record: { path: entry.path, name: legacy ? nameFor(entry.path) : entry.name, archived: legacy ? false : entry.archived, revision: hash(raw) } };
+    return { raw, record: { id: keyFor(entry.path), path: entry.path, name: legacy ? nameFor(entry.path) : entry.name, archived: legacy ? false : entry.archived, revision: hash(raw) } };
   }
   async function list() {
     let entries;
@@ -67,7 +67,7 @@ export function createWorkspaceStore(stateDir) {
       try { await file.writeFile(raw); await file.sync(); } finally { await file.close(); }
       if ((await read(name)).raw !== before.raw) throw new Error('Workspace changed; preserve temporary metadata and inspect before retrying');
       await fs.rename(temporary, join(dir, name));
-      return { path, name: next.name, archived: next.archived, revision: hash(raw) };
+      return { id: key, path, name: next.name, archived: next.archived, revision: hash(raw) };
     } finally {
       const lock = JSON.parse(await fs.readFile(join(lockPath, 'owner.json'), 'utf8'));
       if (lock.owner !== owner) throw new Error('Workspace lock ownership changed; not removing it');

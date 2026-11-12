@@ -37,7 +37,7 @@ result=$(agent-browser --session "$session" eval --stdin <<'JS'
   const fallbackCode = rows[2]?.cells[1].querySelector('code');
   const standardCell = standardCode[1]?.closest('.cm-table-cell');
   standardCell?.dispatchEvent(new FocusEvent('blur', { bubbles: false }));
-  const blocked = ['mousedown', 'beforeinput', 'paste', 'drop'].every(type => !cell.dispatchEvent(new Event(type, { bubbles: true, cancelable: true })));
+  const blocked = ['beforeinput', 'paste', 'drop'].every(type => !cell.dispatchEvent(new Event(type, { bubbles: true, cancelable: true })));
   return bullets.length >= 2 && tasks.length === 2 && tasks[1].classList.contains('is-checked') &&
     !!document.querySelector('.cm-frontmatter-toggle') && !!document.querySelector('.cm-table-editor') &&
     rows.length === 3 && rows.every(row => row.cells.length === 4) &&
@@ -46,7 +46,7 @@ result=$(agent-browser --session "$session" eval --stdin <<'JS'
     standardCode.length === 4 && standardCode[0].innerText === 'State' && standardCode[1].innerText === 'ready_value' &&
     standardCode[2].innerText === 'two ` ticks' && standardCode[3].innerText === 'safe' && !document.querySelector('.cm-table-editor img') &&
     standardCell?.textContent === '`ready_value`' && !standardCell.isContentEditable &&
-    fallbackCode?.innerText === 'left|right' && blocked && document.querySelector('#document-status').textContent.includes('read-only') && document.querySelector('#save').disabled;
+    fallbackCode?.innerText === 'left|right' && blocked && document.querySelector('#save').disabled;
 })()
 JS
 )
@@ -72,10 +72,14 @@ result=$(agent-browser --session "$session" eval "!document.querySelector('.cm-c
 [ "$result" = true ] || { echo 'Frontmatter collapse changed the document' >&2; exit 1; }
 agent-browser --session "$session" click '.cm-frontmatter-toggle' >/dev/null
 agent-browser --session "$session" wait --text 'title: Example' >/dev/null
-agent-browser --session "$session" click '.cm-table-fallback button' >/dev/null
+agent-browser --session "$session" click '.cm-table-fallback tbody tr:first-child td:nth-child(2)' >/dev/null
 agent-browser --session "$session" wait --fn "[...document.querySelectorAll('.cm-line')].some(line => line.textContent.includes('| --- | --- | --- | --- | --- | --- |'))" >/dev/null
 result=$(agent-browser --session "$session" eval "document.querySelector('#save').disabled")
 [ "$result" = true ] || { echo 'Revealing table source changed the document' >&2; exit 1; }
+agent-browser --session "$session" keyboard inserttext 'TABLE-EDIT' >/dev/null
+agent-browser --session "$session" wait --text 'Unsaved changes' >/dev/null
+agent-browser --session "$session" press Meta+z >/dev/null
+agent-browser --session "$session" wait --fn "document.querySelector('#save').disabled" >/dev/null
 cmp "$tmp/files/preview.md" "$tmp/original.md"
 agent-browser --session "$session" focus '.cm-content' >/dev/null
 agent-browser --session "$session" wait --fn "document.activeElement.classList.contains('cm-content')" >/dev/null
@@ -86,12 +90,23 @@ agent-browser --session "$session" eval "document.querySelector('#save').click()
 agent-browser --session "$session" wait --text 'Saved' --timeout 5000 >/dev/null || { agent-browser --session "$session" eval "({status:document.querySelector('#document-status').textContent, saveDisabled:document.querySelector('#save').disabled})" >&2; exit 1; }
 node -e "const fs=require('node:fs');const before=fs.readFileSync(process.argv[1],'utf8'),after=fs.readFileSync(process.argv[2],'utf8');if(!after.includes(' UI addition.') || after.replace(' UI addition.','')!==before)process.exit(1)" "$tmp/original.md" "$tmp/files/preview.md"
 agent-browser --session "$session" find text 'long.md' click --exact >/dev/null
-agent-browser --session "$session" wait --text 'Line 0' >/dev/null
+agent-browser --session "$session" wait --fn "document.querySelector('#filename').textContent === 'long.md'" >/dev/null
 agent-browser --session "$session" wait --fn "(() => { const container = document.querySelector('.document'); container.scrollTop = container.scrollHeight; return document.querySelector('.cm-table-editor code')?.innerText === 'end_code'; })()" --timeout 10000 >/dev/null
-agent-browser --session "$session" click '.cm-table-toggle' >/dev/null
+agent-browser --session "$session" click '.cm-table-editor tbody td' >/dev/null
 agent-browser --session "$session" wait --fn "!!document.querySelector('.cm-table-source')" >/dev/null
 result=$(agent-browser --session "$session" eval "document.querySelector('#save').disabled")
 [ "$result" = true ] || { echo 'Long table source reveal changed the document' >&2; exit 1; }
+agent-browser --session "$session" keyboard inserttext 'TABLE-EDIT' >/dev/null
+agent-browser --session "$session" wait --text 'Unsaved changes' >/dev/null
+agent-browser --session "$session" eval "document.querySelector('.document').scrollTop = 0; true" >/dev/null
+agent-browser --session "$session" wait --text 'Line 0' --timeout 5000 >/dev/null
+agent-browser --session "$session" find text 'Line 0' click --exact >/dev/null
+agent-browser --session "$session" wait --fn "(() => { document.querySelector('.document').scrollTop = document.querySelector('.document').scrollHeight; return !!document.querySelector('.cm-table-editor') && !document.querySelector('.cm-table-source'); })()" --timeout 5000 >/dev/null || { agent-browser --session "$session" eval "({source:!!document.querySelector('.cm-table-source'),preview:!!document.querySelector('.cm-table-editor'),selection:window.getSelection().toString()})" >&2; echo 'Table did not return to preview after moving outside' >&2; exit 1; }
+result=$(agent-browser --session "$session" eval "document.querySelector('.cm-table-editor').textContent.includes('TABLE-EDIT') && !document.querySelector('#save').disabled")
+[ "$result" = true ] || { echo 'Table edit was not preserved in the preview' >&2; exit 1; }
+agent-browser --session "$session" focus '.cm-content' >/dev/null
+agent-browser --session "$session" press Meta+z >/dev/null
+agent-browser --session "$session" wait --fn "document.querySelector('#save').disabled" >/dev/null
 agent-browser --session "$session" find text 'bom.md' click --exact >/dev/null
 agent-browser --session "$session" wait --fn "!!document.querySelector('.cm-frontmatter-toggle')" >/dev/null
 result=$(agent-browser --session "$session" eval "!!document.querySelector('.cm-list-marker-source') && document.querySelector('#save').disabled")

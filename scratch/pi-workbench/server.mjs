@@ -2,7 +2,7 @@ import { createServer } from 'node:http';
 import { promises as fs } from 'node:fs';
 import { createHash } from 'node:crypto';
 import { homedir } from 'node:os';
-import { dirname, isAbsolute, join, resolve, sep } from 'node:path';
+import { dirname, isAbsolute, join, resolve, sep, posix } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { execFile } from 'node:child_process';
 import { promisify } from 'node:util';
@@ -55,6 +55,28 @@ export async function createWorkbench(root, { trash = macTrash, move = macRename
     const content = new TextDecoder('utf-8', { fatal: true, ignoreBOM: true }).decode(bytes);
     if (/\r(?!\n)/.test(content) || (/\r\n/.test(content) && /(?<!\r)\n/.test(content))) throw new Error('Mixed or unsupported line endings; open this file elsewhere');
     return { content, version: hash(bytes), lineEnding: content.includes('\r\n') ? 'crlf' : 'lf' };
+  }
+  async function resolveLink(source, target, wiki) {
+    await checked(source, 'file');
+    if (typeof target !== 'string' || !target || /[\\\0?#]/.test(target) || target.startsWith('/') || /^[a-z][a-z0-9+.-]*:/i.test(target)) throw new Error('Unsupported link target');
+    const name = wiki && !target.toLowerCase().endsWith('.md') ? `${target}.md` : target;
+    if (!name.toLowerCase().endsWith('.md')) throw new Error('Only Markdown files can be opened');
+    const relative = posix.normalize(posix.join(posix.dirname(source), name));
+    if (relative === '..' || relative.startsWith('../')) throw new Error('Link is outside this workspace');
+    if (!wiki || name.startsWith('./') || name.startsWith('../')) { await checked(relative, 'file'); return { path: relative }; }
+    const files = [], pending = [''];
+    while (pending.length) {
+      for (const item of await list(pending.pop())) {
+        if (item.type === 'directory') pending.push(item.path); else files.push(item.path);
+        if (files.length + pending.length > 50000) throw new Error('Workspace is too large to resolve this wikilink');
+      }
+    }
+    const normalized = posix.normalize(name);
+    if (normalized === '..' || normalized.startsWith('../')) throw new Error('Link is outside this workspace');
+    let matches = name.includes('/') ? files.filter(file => file === relative || file === normalized) : files.filter(file => posix.basename(file) === name);
+    if (!matches.length && name.includes('/')) matches = files.filter(file => file.endsWith(`/${normalized}`));
+    if (matches.length !== 1) throw new Error(matches.length ? 'Wikilink is ambiguous' : 'Linked note not found');
+    await checked(matches[0], 'file'); return { path: matches[0] };
   }
   function serialize(action) {
     const operation = writes.then(action);
@@ -121,7 +143,7 @@ export async function createWorkbench(root, { trash = macTrash, move = macRename
       return { ok: true };
     });
   }
-  return { root: base, list, read, save, inspect, create, rename, remove };
+  return { root: base, list, read, save, inspect, create, rename, remove, resolveLink };
 }
 
 export function createServerFor(workbench, agent, { createWorkspace = createWorkbench } = {}) {
@@ -145,7 +167,7 @@ export function createServerFor(workbench, agent, { createWorkspace = createWork
     try {
       if (req.method === 'GET' && url.pathname === '/api/workspace-root') {
         const piRoot = await fs.realpath(join(homedir(), '.pi')).catch(() => null);
-        return json(res, 200, { root: workbench.root, label: workbench.root === piRoot ? '~/.pi' : workbench.root });
+        return json(res, 200, { root: workbench.root, id: hash(workbench.root), label: workbench.root === piRoot ? '~/.pi' : workbench.root });
       }
       if (agent && req.method === 'GET' && url.pathname === '/api/agent/state') return json(res, 200, agent.snapshot());
       if (agent && req.method === 'GET' && url.pathname === '/api/agent/sessions') return json(res, 200, await agent.list());
@@ -157,12 +179,13 @@ export function createServerFor(workbench, agent, { createWorkspace = createWork
       }
       if (req.method === 'GET' && url.pathname === '/api/list') return json(res, 200, await (await workspace(url.searchParams.get('workspace'))).list(url.searchParams.get('path') ?? ''));
       if (req.method === 'GET' && url.pathname === '/api/file') return json(res, 200, await (await workspace(url.searchParams.get('workspace'))).read(url.searchParams.get('path') ?? ''));
+      if (req.method === 'GET' && url.pathname === '/api/link') return json(res, 200, await (await workspace(url.searchParams.get('workspace'))).resolveLink(url.searchParams.get('source') ?? '', url.searchParams.get('target') ?? '', url.searchParams.get('wiki') === 'true'));
       if (req.method === 'GET' && url.pathname === '/api/entry') return json(res, 200, await (await workspace(url.searchParams.get('workspace'))).inspect(url.searchParams.get('path') ?? '', url.searchParams.get('kind')));
       if (req.method === 'POST' && (url.pathname === '/api/file' || url.pathname === '/api/entry' || (agent && url.pathname.startsWith('/api/agent/')))) {
         if (req.headers.origin !== `http://${expectedHost}` || !req.headers['content-type']?.startsWith('application/json')) return json(res, 403, { error: 'Origin not allowed' });
         req.setEncoding('utf8');
         let data = ''; for await (const chunk of req) { data += chunk; if (data.length > 10_000_000) return json(res, 413, { error: 'File too large' }); }
-        const { path, content, version, action, parent, name, kind, key, message, archived, cwd, changes, revision, id, value, workspace: workspacePath } = JSON.parse(data);
+        const { path, content, version, action, parent, name, kind, key, message, document, archived, cwd, changes, revision, id, value, workspace: workspacePath } = JSON.parse(data);
         if (url.pathname === '/api/agent/dialog') { agent.respondDialog(id, value); return json(res, 200, { ok: true }); }
         if (url.pathname === '/api/agent/workspaces') {
           if (typeof cwd !== 'string' || !isAbsolute(cwd)) throw new Error('Enter an absolute working directory');
@@ -180,7 +203,14 @@ export function createServerFor(workbench, agent, { createWorkspace = createWork
         if (['/api/agent/close', '/api/agent/reload', '/api/agent/send', '/api/agent/stop'].includes(url.pathname) && (typeof key !== 'string' || agent.snapshot()?.key !== key)) throw new Error('Session changed; review the active session before retrying');
         if (url.pathname === '/api/agent/reload') return json(res, 200, await agent.reload(key));
         if (url.pathname === '/api/agent/close') { await agent.close(); return json(res, 200, { ok: true }); }
-        if (url.pathname === '/api/agent/send') return json(res, 200, agent.send(message));
+        if (url.pathname === '/api/agent/send') {
+          if (document != null) {
+            if (typeof document !== 'string') throw new Error('Invalid document context');
+            const active = agent.snapshot(); await (await workspace(active.cwd)).inspect(document, 'file');
+            if (agent.snapshot()?.key !== key) throw new Error('Session changed while checking document context');
+          }
+          return json(res, 200, agent.send(message, document ?? null));
+        }
         if (url.pathname === '/api/agent/stop') { await agent.stop(); return json(res, 200, { ok: true }); }
         if (url.pathname.startsWith('/api/agent/')) return json(res, 404, { error: 'Not found' });
         const store = await workspace(workspacePath);

@@ -1,16 +1,17 @@
 import { EditorState, StateEffect } from '@codemirror/state';
-import { ensureSyntaxTree } from '@codemirror/language';
+import { ensureSyntaxTree, syntaxTree } from '@codemirror/language';
 import { EditorView, ViewPlugin, keymap, placeholder } from '@codemirror/view';
 import { defaultKeymap, history, historyKeymap } from '@codemirror/commands';
 import { markdown } from '@codemirror/lang-markdown';
 import { GFM } from '@lezer/markdown';
-import { collapseOnSelectionFacet, livePreviewPlugin, markdownStylePlugin, mouseSelectingField, setMouseSelecting, tableEditorPlugin, editorTheme } from 'codemirror-live-markdown';
+import { collapseOnSelectionFacet, livePreviewPlugin, markdownStylePlugin, mouseSelectingField, setMouseSelecting, setTableSourceMode, tableEditorPlugin, linkPlugin, editorTheme } from 'codemirror-live-markdown';
 import { codeMirrorListPreview } from './markdown/listPreview.js';
 import { inlineCodePreview } from './markdown/inlineCodePreview.js';
 import { frontmatterPreview, frontmatterTheme } from './markdown/frontmatterPreview.js';
 import { nonstandardTablePreview, nonstandardTableTheme } from './markdown/nonstandardTablePreview.js';
 import { tableCellPreview } from './markdown/tableCellPreview.js';
-import { getWorkspace, getDefaultWorkspace, getDefaultWorkspaceLabel, getWorkspaceName, showWorkspaceError } from './workspace.js';
+import { getWorkspace, getDefaultWorkspace, getDefaultWorkspaceLabel, getWorkspaceName, getWorkspaceId, getDefaultWorkspaceId, workspacePathForId, selectWorkspace, showWorkspaceError } from './workspace.js';
+import { fileUrl, parseFileUrl, sessionUrl, parseSessionUrl } from './file-routes.js';
 import './style.css';
 import './agent.js';
 
@@ -33,6 +34,26 @@ $('#theme-toggle').addEventListener('click', () => {
 });
 let view, current, original = '', version, ending = 'lf', saving = false, opening = false, managing = false, stale = false, renaming = false, treeGeneration = 0;
 let selected = { path: '', kind: 'directory' };
+let editorSessionKey = null, sessionRestoring = false, sessionContextReady = true, pendingSessionChange;
+const sessionDocumentKey = (key) => `pi-workbench:session-document:${key}`;
+function resumePendingSession() {
+  if (!pendingSessionChange || dirty() || saving || opening || managing || renaming || sessionRestoring) return;
+  const detail = pendingSessionChange; pendingSessionChange = undefined;
+  document.dispatchEvent(new CustomEvent('agent-session-change', { detail }));
+}
+function rememberDocument() {
+  if (!editorSessionKey) return true;
+  try { localStorage.setItem(sessionDocumentKey(editorSessionKey), JSON.stringify({ version: 1, path: current ?? null })); return true; }
+  catch { updateStatus('Could not save this session’s document association in browser storage.'); return false; }
+}
+let routeReady = false, routeApplying = false, historyIndex = 0, restoringHistory = false;
+let routeQueue = Promise.resolve(), resolveRoutes;
+const routesInitialized = new Promise((resolve) => { resolveRoutes = resolve; });
+function pushFileLocation(path) {
+  if (editorSessionKey) return;
+  const id = getWorkspaceId(); if (!id) return;
+  historyIndex++; window.history.pushState({ ...window.history.state, workbenchIndex: historyIndex }, '', fileUrl(id, path));
+}
 const containers = new Map([['', $('#tree')]]);
 const parentOf = (path) => path.includes('/') ? path.slice(0, path.lastIndexOf('/')) : '';
 const normalize = (text) => text.replace(/\r\n/g, '\n');
@@ -84,7 +105,7 @@ async function loadTree(target, path = '') {
       } else {
         const button = document.createElement('button'); button.className = 'file'; button.textContent = item.name; button.title = item.path; button.dataset.entry = item.path;
         button.classList.toggle('selected', selected.path === item.path);
-        button.addEventListener('click', () => openFile(item.path, button)); target.append(button);
+        button.addEventListener('click', async () => { await routesInitialized; if (await openFile(item.path, button) && !routeApplying) pushFileLocation(item.path); }); target.append(button);
       }
     }
   } catch (error) { if (generation === treeGeneration && workspace === getWorkspace()) target.textContent = error.message; }
@@ -102,32 +123,85 @@ const mouseSelection = ViewPlugin.fromClass(class {
   }
   destroy() { this.disposed = true; this.editor.contentDOM.removeEventListener('mousedown', this.down); this.editor.dom.ownerDocument.removeEventListener('mouseup', this.up); }
 });
+async function followLink(target, wiki) {
+  const owner = view, source = current, workspace = getWorkspace();
+  if (!wiki && /^https?:\/\//i.test(target)) { window.open(target, '_blank', 'noopener,noreferrer'); return; }
+  try {
+    const decoded = wiki ? target : decodeURIComponent(target);
+    const result = await api(`/api/link?${new URLSearchParams({ workspace, source, target: decoded, wiki: String(wiki) })}`);
+    if (owner !== view || source !== current || workspace !== getWorkspace()) return;
+    if (result.path === current) { updateStatus('Already open'); return; }
+    if (await openFile(result.path) && !routeApplying) pushFileLocation(result.path);
+  } catch (error) { if (owner === view && source === current && workspace === getWorkspace()) updateStatus(error.message); }
+}
+function linkTarget(editor, element) {
+  const pos = editor.posAtDOM(element, 0), line = editor.state.doc.lineAt(pos);
+  const wiki = element.classList.contains('cm-wikilink-widget') || element.classList.contains('cm-wikilink-source');
+  const pattern = wiki ? /(!?)\[\[([^\]|]+)(?:\|([^\]]+))?\]\]/g : /(!?)\[([^\]]*)\]\(([^\s)]+)(?:\s+["'][^"']*["'])?\)/g;
+  for (const match of line.text.matchAll(pattern)) {
+    const from = line.from + match.index + match[1].length, to = line.from + match.index + match[0].length;
+    if (!match[1] && pos >= from && pos <= to) return { target: wiki ? match[2] : match[3], wiki };
+  }
+  return null;
+}
 function clearDocument() {
   view?.destroy(); view = undefined; current = undefined; original = ''; version = undefined; stale = false;
   $('#document').hidden = true; $('#empty').hidden = false; updateStatus();
 }
-async function openFile(path, button) {
-  if (saving || opening || managing || renaming || (dirty() && !confirm('Discard unsaved changes and open another file?'))) return;
+async function openFile(path, button, prefetched) {
+  if (saving || opening || managing || renaming || (dirty() && !confirm('Discard unsaved changes and open another file?'))) return false;
   const before = view?.state.doc.toString(); opening = true;
   try {
-    updateStatus('Opening…'); const file = await api(`/api/file?${query(path)}`);
-    if (view && view.state.doc.toString() !== before) { updateStatus('Editor changed while opening; try again.'); return; }
+    updateStatus('Opening…'); const file = prefetched ?? await api(`/api/file?${query(path)}`);
+    if (view && view.state.doc.toString() !== before) { updateStatus('Editor changed while opening; try again.'); return false; }
     view?.destroy(); current = path; original = normalize(file.content); version = file.version; ending = file.lineEnding; stale = false;
     $('#empty').hidden = true; $('#document').hidden = false; $('#filename').textContent = path.split('/').at(-1); $('#document-path').textContent = displayPath(path);
-    document.querySelectorAll('.file.active').forEach((node) => node.classList.remove('active')); button.classList.add('active'); select(path, 'file');
-    const state = EditorState.create({ doc: original, extensions: [history(), keymap.of([...defaultKeymap, ...historyKeymap]), markdown({ extensions: [GFM] }), EditorView.lineWrapping, EditorView.contentAttributes.of({ 'aria-label': 'Markdown source editor' }), placeholder('Start writing…'), collapseOnSelectionFacet.of(true), mouseSelectingField, mouseSelection, livePreviewPlugin, markdownStylePlugin, codeMirrorListPreview, inlineCodePreview, frontmatterPreview, frontmatterTheme, nonstandardTablePreview, nonstandardTableTheme, tableCellPreview, editorTheme, EditorView.updateListener.of((update) => { if (update.docChanged) updateStatus(); })] });
+    document.querySelectorAll('.file.active').forEach((node) => node.classList.remove('active')); button?.classList.add('active'); select(path, 'file');
+    let autoTable;
+    const state = EditorState.create({ doc: original, extensions: [history(), keymap.of([...defaultKeymap, ...historyKeymap]), markdown({ extensions: [GFM] }), EditorView.lineWrapping, EditorView.contentAttributes.of({ 'aria-label': 'Markdown source editor' }), placeholder('Start writing…'), collapseOnSelectionFacet.of(true), mouseSelectingField, mouseSelection, livePreviewPlugin, markdownStylePlugin, codeMirrorListPreview, inlineCodePreview, frontmatterPreview, frontmatterTheme, nonstandardTablePreview, nonstandardTableTheme, tableCellPreview, linkPlugin(), editorTheme, EditorView.updateListener.of((update) => {
+      if (update.docChanged) updateStatus();
+      if (!autoTable) return;
+      if (update.docChanged) autoTable = { from: update.changes.mapPos(autoTable.from, 1), to: update.changes.mapPos(autoTable.to, 1) };
+      const range = autoTable, editor = update.view;
+      if (!editor.state.selection.ranges.some(selection => selection.from <= range.to && selection.to >= range.from)) requestAnimationFrame(() => {
+        if (view !== editor || autoTable !== range || editor.state.selection.ranges.some(selection => selection.from <= range.to && selection.to >= range.from)) return;
+        autoTable = undefined; editor.dispatch({ effects: setTableSourceMode.of({ ...range, showSource: false }) });
+      });
+    })] });
     // Let the upstream table field see the complete initial syntax tree, including long documents.
     ensureSyntaxTree(state, state.doc.length, 500);
     view = new EditorView({ parent: $('#editor'), state: state.update({ effects: StateEffect.appendConfig.of(tableEditorPlugin()) }).state });
+    // Links are editable on ordinary click; only a modifier follows them.
+    view.dom.addEventListener('click', (event) => { if (event.target instanceof Element && event.target.closest('.cm-link-widget')) event.preventDefault(); }, true);
+    view.dom.addEventListener('mousedown', (event) => {
+      if (event.button !== 0 || !(event.metaKey || event.ctrlKey) || !(event.target instanceof Element)) return;
+      const element = event.target.closest('.cm-link-widget, .cm-link-source');
+      if (!element) return;
+      const link = linkTarget(view, element); if (!link) return;
+      event.preventDefault(); event.stopPropagation(); void followLink(link.target, link.wiki);
+    }, true);
     // Upstream cell editing can rewrite and lose Markdown; preview only until round-tripping is safe.
     const blockTableEdit = (event) => {
       if (!(event.target instanceof Element) || !event.target.closest('.cm-table-cell')) return;
       event.preventDefault();
-      if (event.type === 'mousedown') updateStatus('Table cells are read-only. Use the MD button to edit the source.');
+      if (event.type === 'mousedown') {
+        const cell = event.target.closest('.cm-table-cell');
+        const row = cell.closest('tr')?.rowIndex ?? 0;
+        cell.closest('.cm-table-editor')?.querySelector('.cm-table-toggle')?.click();
+        let node = syntaxTree(view.state).resolveInner(view.state.selection.main.head, 1);
+        while (node && node.name !== 'Table') node = node.parent;
+        if (node) autoTable = { from: node.from, to: node.to };
+        const first = view.state.doc.lineAt(view.state.selection.main.head).number;
+        const line = view.state.doc.line(Math.min(view.state.doc.lines, first + (row ? row + 1 : 0)));
+        const offset = line.text.match(/^\s*\|\s*/)?.[0].length ?? 0;
+        view.dispatch({ selection: { anchor: line.from + offset }, scrollIntoView: true }); view.focus();
+      }
     };
     for (const event of ['mousedown', 'beforeinput', 'paste', 'drop']) view.dom.addEventListener(event, blockTableEdit, true);
     updateStatus();
-  } catch (error) { updateStatus(error.message); } finally { opening = false; updateControls(); }
+    if (!sessionRestoring) sessionContextReady = rememberDocument();
+    return true;
+  } catch (error) { updateStatus(error.message); return false; } finally { opening = false; updateControls(); resumePendingSession(); }
 }
 async function save() {
   if (!view || !current || !dirty() || saving || opening || managing || renaming) return;
@@ -135,13 +209,36 @@ async function save() {
   try {
     const content = ending === 'crlf' ? snapshot.replace(/\n/g, '\r\n') : snapshot;
     const result = await api('/api/file', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ workspace: getWorkspace(), path: current, content, version }) });
-    version = result.version; original = snapshot; stale = false; saving = false; updateStatus();
-  } catch (error) { if (error.status === 409) stale = true; saving = false; updateStatus(error.message); }
+    version = result.version; original = snapshot; stale = false; saving = false; updateStatus(); resumePendingSession(); return true;
+  } catch (error) { if (error.status === 409) stale = true; saving = false; updateStatus(error.message); return false; }
+}
+function discardChanges() {
+  view.dispatch({ changes: { from: 0, to: view.state.doc.length, insert: original } }); updateStatus(); resumePendingSession();
 }
 function discard() {
   if (!view || !current || !dirty() || saving || opening || managing || renaming) return;
   if (!confirm('Discard unsaved changes and restore the last loaded or saved version?')) return;
-  view.dispatch({ changes: { from: 0, to: view.state.doc.length, insert: original } }); updateStatus();
+  discardChanges();
+}
+async function confirmSessionChange(allowed) {
+  if (saving || opening || managing || renaming || sessionRestoring) { updateStatus('Finish the current file operation before switching sessions.'); return false; }
+  if (!dirty()) return true;
+  const dialog = $('#session-change-dialog');
+  if (dialog.open) return false;
+  const editor = view, path = current, workspace = getWorkspace(), key = editorSessionKey;
+  const choice = await new Promise((resolve) => {
+    dialog.returnValue = 'cancel'; dialog.addEventListener('close', () => resolve(dialog.returnValue), { once: true }); dialog.showModal();
+  });
+  if (choice !== 'save' && choice !== 'discard') return false;
+  if (!allowed() || view !== editor || current !== path || getWorkspace() !== workspace || editorSessionKey !== key || saving || opening || managing || renaming || sessionRestoring) {
+    updateStatus('The editor or session changed; review your work before switching.'); return false;
+  }
+  if (choice === 'save') { if (!(await save())) return false; }
+  else if (dirty()) discardChanges();
+  if (!allowed() || view !== editor || current !== path || getWorkspace() !== workspace || editorSessionKey !== key || dirty()) {
+    updateStatus('The editor or session changed; review your work before switching.'); return false;
+  }
+  return true;
 }
 async function inspectCurrent() {
   const result = await api(`/api/entry?${query(current, { kind: 'file' })}`);
@@ -169,7 +266,8 @@ async function finishRename() {
   try {
     const itemVersion = await inspectCurrent();
     const result = await api('/api/entry', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ workspace: getWorkspace(), action: 'rename', path, kind: 'file', name, version: itemVersion }) });
-    current = result.path; $('#filename').textContent = current.split('/').at(-1); $('#document-path').textContent = displayPath(current);
+    current = result.path; rememberDocument(); $('#filename').textContent = current.split('/').at(-1); $('#document-path').textContent = displayPath(current);
+    if (routeReady && getWorkspaceId() && !editorSessionKey) window.history.replaceState({ ...window.history.state, workbenchIndex: historyIndex }, '', fileUrl(getWorkspaceId(), current));
     managing = false; endRename(); select(current, 'file'); await refreshParent(parent); updateStatus('Renamed');
   } catch (error) { updateStatus(error.message); if (stale) endRename(); }
   finally { managing = false; $('#rename-input').disabled = false; updateControls(); if (renaming) $('#rename-input').focus(); }
@@ -182,7 +280,9 @@ async function trashCurrent() {
   try {
     const itemVersion = await inspectCurrent();
     await api('/api/entry', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ workspace: getWorkspace(), action: 'trash', path, kind: 'file', version: itemVersion }) });
-    clearDocument(); managing = false; select(parent, 'directory'); await refreshParent(parent); $('#tree-status').textContent = 'Moved to Trash.';
+    clearDocument(); rememberDocument();
+    if (routeReady && getWorkspaceId() && !editorSessionKey) window.history.replaceState({ ...window.history.state, workbenchIndex: historyIndex }, '', fileUrl(getWorkspaceId()));
+    managing = false; select(parent, 'directory'); await refreshParent(parent); $('#tree-status').textContent = 'Moved to Trash.';
   } catch (error) { updateStatus(error.message); }
   finally { managing = false; updateControls(); }
 }
@@ -198,18 +298,103 @@ async function create(kind) {
   } catch (error) { $('#tree-status').textContent = error.message; }
   finally { managing = false; updateControls(); }
 }
+document.addEventListener('agent-session-change', (event) => {
+  const { key, created } = event.detail;
+  if (dirty() || saving || managing || opening || renaming || sessionRestoring) { pendingSessionChange = event.detail; sessionContextReady = false; updateStatus('Session changed while the editor is busy or has unsaved work. Save or discard it before continuing.'); return; }
+  pendingSessionChange = undefined; editorSessionKey = key;
+  if (created) { sessionContextReady = rememberDocument(); return; }
+  let saved;
+  try {
+    const raw = localStorage.getItem(sessionDocumentKey(key));
+    saved = raw === null ? null : JSON.parse(raw);
+    if (raw !== null && (!saved || typeof saved !== 'object' || Array.isArray(saved) || saved.version !== 1 || (saved.path !== null && typeof saved.path !== 'string'))) throw new Error('Invalid session document metadata');
+  } catch { sessionContextReady = false; updateStatus('Could not read this session’s document association from browser storage.'); return; }
+  sessionRestoring = true; sessionContextReady = false;
+  const restore = async () => {
+    if (!saved?.path) { clearDocument(); select('', 'directory'); sessionContextReady = true; return; }
+    if (saved.path === current) { sessionContextReady = true; return; }
+    if (await openFile(saved.path)) sessionContextReady = true;
+    else updateStatus('The session’s last document could not be restored. Choose a file to continue.');
+  };
+  void restore().finally(() => { sessionRestoring = false; resumePendingSession(); });
+});
+document.addEventListener('agent-document-context', (event) => {
+  if (event.detail.key !== editorSessionKey || !sessionContextReady || sessionRestoring) event.detail.error = 'The editor is not ready for this session; choose a document or resolve the existing draft first.';
+  else if (dirty() || saving) event.detail.error = 'Save or discard the document before asking about its current contents.';
+  else event.detail.path = current ?? null;
+});
+document.addEventListener('session-before-change', (event) => { event.detail.check = confirmSessionChange(event.detail.allowed); });
 document.addEventListener('workspace-before-change', (event) => {
   if (event.defaultPrevented) return;
-  if (saving || opening || managing || renaming) { showWorkspaceError('Finish the current file operation before switching workspaces.'); event.preventDefault(); }
+  if (!routeReady && !routeApplying) { showWorkspaceError('Wait for workspaces to finish loading.'); event.preventDefault(); }
+  else if (saving || opening || managing || renaming) { showWorkspaceError('Finish the current file operation before switching workspaces.'); event.preventDefault(); }
   else if (dirty() && !confirm('Discard unsaved changes and switch workspaces?')) event.preventDefault();
 });
 document.addEventListener('workspace-change', () => {
+  editorSessionKey = null; pendingSessionChange = undefined; sessionContextReady = false;
   treeGeneration++; clearDocument(); containers.clear(); containers.set('', $('#tree')); selected = { path: '', kind: 'directory' };
   const path = getWorkspace(); $('#new-file').disabled = $('#new-folder').disabled = !path;
   $('#root-name').textContent = getWorkspaceName() || path;
   $('#select-root').title = path; $('#tree-status').textContent = ''; select('', 'directory'); void loadTree($('#tree'));
+  if (routeReady && !routeApplying) pushFileLocation();
 });
 document.addEventListener('workspace-label-change', () => { if (getWorkspace()) $('#root-name').textContent = getWorkspaceName() || getWorkspace(); });
+
+function routeAt(url) {
+  const parsed = new URL(url, location.href);
+  if (parsed.pathname === '/' && !parsed.search) return { workspaceId: getDefaultWorkspaceId(), path: null };
+  return parseSessionUrl(parsed.href) ?? parseFileUrl(parsed.href);
+}
+async function applyFileRoute(route) {
+  if (!route) { showWorkspaceError('This Workbench URL is invalid.'); return false; }
+  if (route.sessionKey) return new Promise((resolve) => document.dispatchEvent(new CustomEvent('open-session-route', { detail: { key: route.sessionKey, resolve } })));
+  const path = workspacePathForId(route.workspaceId);
+  if (!path) { showWorkspaceError('This workspace is unavailable or archived.'); return false; }
+  let prefetched;
+  if (path !== getWorkspace() && route.path !== null) {
+    const workspaceBefore = getWorkspace(), fileBefore = current;
+    try { prefetched = await api(`/api/file?${new URLSearchParams({ workspace: path, path: route.path })}`); }
+    catch (error) { showWorkspaceError(`Could not open the linked file: ${error.message}`); return false; }
+    if (getWorkspace() !== workspaceBefore || current !== fileBefore) { showWorkspaceError('Workspace changed during navigation; try again.'); return false; }
+  }
+  if (path !== getWorkspace() && !selectWorkspace(path)) return false;
+  if (route.path === current) { $('#files-tab').click(); return true; }
+  if (route.path === null) {
+    if (saving || opening || managing || renaming || (dirty() && !confirm('Discard unsaved changes and leave this file?'))) return false;
+    clearDocument(); select('', 'directory'); $('#files-tab').click(); return true;
+  }
+  const opened = await openFile(route.path, undefined, prefetched);
+  if (opened) $('#files-tab').click();
+  return opened;
+}
+document.addEventListener('workspace-ready', () => {
+  const index = Number.isSafeInteger(window.history.state?.workbenchIndex) ? window.history.state.workbenchIndex : 0;
+  historyIndex = index; window.history.replaceState({ ...window.history.state, workbenchIndex: index }, '', location.href);
+  const initial = routeAt(location.href); routeApplying = true;
+  routeQueue = applyFileRoute(initial).finally(() => { routeApplying = false; routeReady = true; resolveRoutes(); });
+});
+window.addEventListener('popstate', (event) => {
+  if (restoringHistory) { restoringHistory = false; return; }
+  if (!routeReady) return;
+  const target = routeAt(location.href), targetIndex = event.state?.workbenchIndex;
+  const priorUrl = editorSessionKey ? sessionUrl(editorSessionKey) : fileUrl(getWorkspaceId(), current || undefined), priorIndex = historyIndex;
+  routeQueue = routeQueue.then(async () => {
+    routeApplying = true;
+    let applied = false;
+    try { applied = await applyFileRoute(target); }
+    finally { routeApplying = false; }
+    if (applied) { if (Number.isSafeInteger(targetIndex)) historyIndex = targetIndex; return; }
+    if (Number.isSafeInteger(targetIndex) && targetIndex !== priorIndex) { restoringHistory = true; window.history.go(priorIndex - targetIndex); }
+    else window.history.replaceState({ ...window.history.state, workbenchIndex: priorIndex }, '', priorUrl);
+  });
+});
+document.addEventListener('agent-session-reactivated', (event) => {
+  if (routeReady && !routeApplying) window.history.replaceState({ ...window.history.state, workbenchIndex: historyIndex }, '', sessionUrl(event.detail.key));
+});
+document.addEventListener('agent-session-selected', (event) => {
+  if (!routeReady || routeApplying) return;
+  historyIndex++; window.history.pushState({ ...window.history.state, workbenchIndex: historyIndex }, '', sessionUrl(event.detail.key));
+});
 $('#save').addEventListener('click', save);
 $('#discard').addEventListener('click', discard);
 $('#trash').addEventListener('click', trashCurrent);

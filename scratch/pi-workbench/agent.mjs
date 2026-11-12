@@ -78,7 +78,7 @@ export function createAgentHost({ agentDir = getAgentDir(), stateDir = join(agen
   }
   async function list() {
     const [sessions, archived] = await Promise.all([discover(), archive.list()]);
-    knownSessions = new Map(sessions.map((info) => [keyFor(info.path), info.path]));
+    knownSessions = new Map(sessions.map((info) => [keyFor(info.path), { path: info.path, id: info.id, cwd: info.cwd }]));
     const directories = [...new Set(sessions.map((info) => info.cwd).filter((cwd) => typeof cwd === 'string' && isAbsolute(cwd)))];
     const canonical = new Map(await Promise.all(directories.map(async (cwd) => [cwd, await fs.realpath(cwd).catch(() => cwd)])));
     const result = sessions.map((info) => ({ key: keyFor(info.path), id: info.id, cwd: canonical.get(info.cwd) ?? info.cwd, name: info.name || info.firstMessage || 'Untitled session', modified: info.modified, archived: Object.hasOwn(archived, keyFor(info.path)) }));
@@ -88,7 +88,7 @@ export function createAgentHost({ agentDir = getAgentDir(), stateDir = join(agen
   }
   async function setArchived(key, archived) {
     if (typeof key !== 'string' || !/^[a-f0-9]{64}$/.test(key) || typeof archived !== 'boolean') throw new Error('Invalid archive request');
-    const path = knownSessions.get(key);
+    const path = knownSessions.get(key)?.path;
     if (!path) throw new Error('Session not found; refresh the session list');
     try { if (!(await fs.stat(path)).isFile()) throw new Error('Not a file'); }
     catch (error) { if (error.code === 'ENOENT' || error.message === 'Not a file') throw new Error('Session not found; refresh the session list'); throw error; }
@@ -140,9 +140,14 @@ export function createAgentHost({ agentDir = getAgentDir(), stateDir = join(agen
         lock = await acquire(manager.getSessionId());
       } else {
         if (typeof key !== 'string' || !/^[a-f0-9]{64}$/.test(key)) throw new Error('Select an existing session');
-        const matches = (await discover()).filter((info) => keyFor(info.path) === key);
-        if (matches.length !== 1) throw new Error('Session not found; refresh the session list');
-        const info = matches[0];
+        let info = knownSessions.get(key);
+        if (!info) {
+          const matches = (await discover()).filter((entry) => keyFor(entry.path) === key);
+          if (matches.length !== 1) throw new Error('Session not found; refresh the session list');
+          info = matches[0];
+        }
+        try { if (!(await fs.stat(info.path)).isFile()) throw new Error('Not a file'); }
+        catch (error) { if (error.code === 'ENOENT' || error.message === 'Not a file') throw new Error('Session not found; refresh the session list'); throw error; }
         if (!info.cwd) throw new Error('This session has no recorded working directory');
         path = await normalizeCwd(info.cwd); await ensureState();
         lock = await acquire(/^[a-f0-9-]+$/i.test(info.id) ? info.id : key);
@@ -227,14 +232,15 @@ export function createAgentHost({ agentDir = getAgentDir(), stateDir = join(agen
     if (failure) { publish({ type: 'error', message: failure.message }); throw failure; }
     return snapshot();
   }
-  function send(message) {
+  function send(message, document = null) {
     if (!active) throw new Error('Open a session first');
     if (active.unsafe) throw new Error('Extension failure or incomplete reload; close and reopen the session before continuing');
     if (busy || opening) throw new Error('Agent is already running');
     if (typeof message !== 'string' || !message.trim()) throw new Error('Enter a message');
     busy = true; partial = ''; publish({ type: 'busy', value: true });
     const running = active, session = active.session;
-    runPromise = session.prompt(message).catch((error) => publish({ type: 'error', message: error.message })).finally(async () => {
+    const prompt = document === null ? message : `${message}\n\n[Workbench context: the document open in the editor is ${JSON.stringify(document)} (path relative to the session working directory). Read it from disk if needed; this is a path, not document content.]`;
+    runPromise = session.prompt(prompt).catch((error) => publish({ type: 'error', message: error.message })).finally(async () => {
       let appeared = false;
       if (running.createdHere) {
         try { if ((await fs.stat(running.sessionPath)).isFile()) { running.createdHere = false; appeared = true; } }

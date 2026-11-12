@@ -67,6 +67,16 @@ class TablePreview extends WidgetType {
       body.appendChild(tr)
     }
     table.appendChild(body); wrapper.append(toolbar, table)
+    table.addEventListener('mousedown', (event) => {
+      const cell = event.target instanceof Element && event.target.closest('th, td')
+      if (!cell) return
+      event.preventDefault()
+      const row = cell.closest('tr')?.rowIndex ?? 0
+      const first = view.state.doc.lineAt(this.from).number
+      const line = view.state.doc.line(Math.min(view.state.doc.lines, first + (row ? row + 1 : 0)))
+      const offset = line.text.match(/^\s*\|\s*/)?.[0].length ?? 0
+      view.dispatch({ selection: { anchor: line.from + offset }, scrollIntoView: true }); view.focus()
+    })
     return wrapper
   }
   ignoreEvent() { return true }
