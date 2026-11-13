@@ -16,6 +16,21 @@ import './style.css';
 import './agent.js';
 
 const $ = (selector) => document.querySelector(selector);
+let paneMode = 'split';
+function setPaneMode(mode) {
+  paneMode = mode;
+  $('#files-view').hidden = mode === 'chat'; $('#agent-view').hidden = mode === 'editor';
+  $('.workspace').classList.toggle('is-focused', mode !== 'split');
+  for (const [key, name] of [['editor', 'editor'], ['chat', 'session']]) {
+    const button = $(`#${key}-expand`), expanded = mode === key;
+    button.setAttribute('aria-pressed', String(expanded));
+    button.setAttribute('aria-label', expanded ? 'Restore split view' : `Expand ${name}`);
+    button.title = expanded ? 'Restore split view' : `Expand ${name}`;
+  }
+  if (mode !== 'chat') requestAnimationFrame(() => view?.requestMeasure());
+}
+$('#editor-expand').addEventListener('click', () => setPaneMode(paneMode === 'editor' ? 'split' : 'editor'));
+$('#chat-expand').addEventListener('click', () => setPaneMode(paneMode === 'chat' ? 'split' : 'chat'));
 const sidebar = $('.sidebar'), sidebarToggle = $('#sidebar-toggle');
 function setSidebarCollapsed(collapsed) {
   sidebar.classList.toggle('is-collapsed', collapsed);

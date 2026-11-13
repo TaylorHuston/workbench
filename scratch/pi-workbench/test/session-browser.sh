@@ -52,9 +52,23 @@ agent-browser --session "$session" screenshot /tmp/pi-workbench-session-layout.p
 agent-browser --session "$session" focus '.cm-content' >/dev/null
 agent-browser --session "$session" keyboard inserttext ' SIDEBAR-DRAFT' >/dev/null
 agent-browser --session "$session" fill '#agent-message' 'unsent message' >/dev/null
+agent-browser --session "$session" click '#editor-expand' >/dev/null
+agent-browser --session "$session" wait --fn "document.querySelector('#agent-view').hidden && !document.querySelector('#files-view').hidden && document.querySelector('#editor-expand').getAttribute('aria-pressed') === 'true' && document.querySelector('.cm-content').textContent.includes('SIDEBAR-DRAFT') && document.querySelector('#agent-message').value === 'unsent message'" >/dev/null
+agent-browser --session "$session" screenshot /tmp/pi-workbench-editor-expanded.png >/dev/null
+agent-browser --session "$session" click '#editor-expand' >/dev/null
+agent-browser --session "$session" wait --fn "!document.querySelector('#agent-view').hidden && document.querySelector('#editor-expand').getAttribute('aria-pressed') === 'false'" >/dev/null
+agent-browser --session "$session" click '#chat-expand' >/dev/null
+agent-browser --session "$session" wait --fn "document.querySelector('#files-view').hidden && !document.querySelector('#agent-view').hidden && document.querySelector('#chat-expand').getAttribute('aria-pressed') === 'true' && document.querySelector('#agent-message').value === 'unsent message' && new URL(location.href).searchParams.get('session') === '$one'" >/dev/null
+agent-browser --session "$session" screenshot /tmp/pi-workbench-chat-expanded.png >/dev/null
+agent-browser --session "$session" click '#chat-expand' >/dev/null
+agent-browser --session "$session" wait --fn "!document.querySelector('#files-view').hidden && document.querySelector('.cm-content').textContent.includes('SIDEBAR-DRAFT') && document.querySelector('#agent-message').value === 'unsent message'" >/dev/null
 agent-browser --session "$session" click '#sidebar-toggle' >/dev/null
 agent-browser --session "$session" wait --fn "document.querySelector('.sidebar').classList.contains('is-collapsed') && document.querySelector('#sidebar-toggle').getAttribute('aria-expanded') === 'false' && document.querySelector('.sidebar').getBoundingClientRect().width === 52 && document.querySelector('.cm-content').textContent.includes('SIDEBAR-DRAFT') && document.querySelector('#agent-message').value === 'unsent message' && new URL(location.href).searchParams.get('session') === '$one'" >/dev/null
 agent-browser --session "$session" screenshot /tmp/pi-workbench-sidebar-collapsed.png >/dev/null
+agent-browser --session "$session" click '#chat-expand' >/dev/null
+agent-browser --session "$session" wait --fn "document.querySelector('#files-view').hidden && document.querySelector('.sidebar').classList.contains('is-collapsed') && document.querySelector('#agent-message').value === 'unsent message'" >/dev/null
+agent-browser --session "$session" click '#chat-expand' >/dev/null
+agent-browser --session "$session" wait --fn "!document.querySelector('#files-view').hidden && document.querySelector('.cm-content').textContent.includes('SIDEBAR-DRAFT')" >/dev/null
 agent-browser --session "$session" click '#sidebar-toggle' >/dev/null
 agent-browser --session "$session" wait --fn "!document.querySelector('.sidebar').classList.contains('is-collapsed') && document.querySelector('#sidebar-toggle').getAttribute('aria-expanded') === 'true'" >/dev/null
 agent-browser --session "$session" fill '#agent-message' '' >/dev/null
@@ -62,6 +76,9 @@ agent-browser --session "$session" focus '.cm-content' >/dev/null
 agent-browser --session "$session" press Meta+z >/dev/null
 agent-browser --session "$session" wait --fn "document.querySelector('#save').disabled" >/dev/null
 agent-browser --session "$session" set viewport 390 844 >/dev/null
+agent-browser --session "$session" click '#chat-expand' >/dev/null
+agent-browser --session "$session" wait --fn "document.querySelector('#files-view').hidden && document.querySelector('.workspace').classList.contains('is-focused') && document.querySelector('#agent-view').getBoundingClientRect().height > 0" >/dev/null
+agent-browser --session "$session" click '#chat-expand' >/dev/null
 agent-browser --session "$session" click '#sidebar-toggle' >/dev/null
 agent-browser --session "$session" wait --fn "document.querySelector('.sidebar').getBoundingClientRect().height === 48 && document.querySelector('#sidebar-toggle').getAttribute('aria-label') === 'Expand sidebar'" >/dev/null
 agent-browser --session "$session" click '#sidebar-toggle' >/dev/null
