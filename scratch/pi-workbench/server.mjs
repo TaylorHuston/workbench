@@ -20,6 +20,27 @@ async function macRename(source, destination) {
   await execFileAsync('/usr/bin/osascript', ['-l', 'JavaScript', '-e', script, source, destination]);
 }
 const hash = (buffer) => createHash('sha256').update(buffer).digest('hex');
+const maxDocumentBytes = 5 * 1024 * 1024;
+function protectedName(name) {
+  const value = name.toLowerCase();
+  return value.startsWith('.env') || ['.git', '.mcp.json', 'auth.json', 'secrets', 'credentials', 'credentials.json', '.netrc', '.npmrc', 'id_rsa', 'id_ed25519'].includes(value) || /\.(?:pem|key|p12|pfx)$/.test(value);
+}
+function rejectBinaryName(path) {
+  if (/\.(?:png|jpe?g|gif|webp|avif|heic|ico|pdf|zip|gz|tar|dmg|exe|dll|so|dylib|wasm|sqlite|db|mp3|mp4|mov|woff2?|ttf|otf)$/i.test(path)) throw new Error('Binary files cannot be edited');
+}
+function decodeDocument(bytes) {
+  if (bytes.length > maxDocumentBytes) throw new Error('File is too large to open in Workbench (5 MiB limit)');
+  if (bytes.includes(0)) throw new Error('Binary files cannot be edited');
+  let content;
+  try { content = new TextDecoder('utf-8', { fatal: true, ignoreBOM: true }).decode(bytes); }
+  catch { throw new Error('File is not valid UTF-8 text'); }
+  if (/\r(?!\n)/.test(content) || (/\r\n/.test(content) && /(?<!\r)\n/.test(content))) throw new Error('Mixed or unsupported line endings; open this file elsewhere');
+  return content;
+}
+async function documentBytes(file) {
+  if ((await fs.stat(file)).size > maxDocumentBytes) throw new Error('File is too large to open in Workbench (5 MiB limit)');
+  return fs.readFile(file);
+}
 const json = (res, status, value) => { res.writeHead(status, { 'Content-Type': 'application/json; charset=utf-8', 'Cache-Control': 'no-store', 'X-Content-Type-Options': 'nosniff' }); res.end(JSON.stringify(value)); };
 
 export async function createWorkbench(root, { trash = macTrash, move = macRename } = {}) {
@@ -29,6 +50,7 @@ export async function createWorkbench(root, { trash = macTrash, move = macRename
     if (typeof path !== 'string' || path.includes('\0') || path.startsWith('/') || path.split('/').some((part) => part === '..' || part === '.')) throw new Error('Invalid path');
     const parts = path ? path.split('/') : [];
     if (parts.some((part) => !part)) throw new Error('Invalid path');
+    if (parts.some(protectedName)) throw new Error('Protected path is not available in Workbench');
     let current = base;
     for (const part of parts) {
       current = join(current, part);
@@ -39,28 +61,27 @@ export async function createWorkbench(root, { trash = macTrash, move = macRename
     if (actual !== base && !actual.startsWith(base + sep)) throw new Error('Path outside root');
     const stat = await fs.stat(actual);
     if (kind === 'directory' && !stat.isDirectory()) throw new Error('Not a directory');
-    if (kind === 'file' && (!stat.isFile() || !path.toLowerCase().endsWith('.md'))) throw new Error('Not a Markdown file');
+    if (kind === 'file' && !stat.isFile()) throw new Error('Not a regular file');
     return actual;
   }
   async function list(path) {
     const dir = await checked(path, 'directory');
     const entries = await fs.readdir(dir, { withFileTypes: true });
-    return entries.filter((entry) => !entry.isSymbolicLink() && (entry.isDirectory() || (entry.isFile() && entry.name.toLowerCase().endsWith('.md'))))
+    return entries.filter((entry) => !entry.isSymbolicLink() && !protectedName(entry.name) && (entry.isDirectory() || entry.isFile()))
       .map((entry) => ({ name: entry.name, path: path ? `${path}/${entry.name}` : entry.name, type: entry.isDirectory() ? 'directory' : 'file' }))
       .sort((a, b) => a.type === b.type ? a.name.localeCompare(b.name) : a.type === 'directory' ? -1 : 1);
   }
   async function read(path) {
-    const file = await checked(path, 'file');
-    const bytes = await fs.readFile(file);
-    const content = new TextDecoder('utf-8', { fatal: true, ignoreBOM: true }).decode(bytes);
-    if (/\r(?!\n)/.test(content) || (/\r\n/.test(content) && /(?<!\r)\n/.test(content))) throw new Error('Mixed or unsupported line endings; open this file elsewhere');
+    const file = await checked(path, 'file'); rejectBinaryName(path);
+    const bytes = await documentBytes(file);
+    const content = decodeDocument(bytes);
     return { content, version: hash(bytes), lineEnding: content.includes('\r\n') ? 'crlf' : 'lf' };
   }
   async function resolveLink(source, target, wiki) {
     await checked(source, 'file');
     if (typeof target !== 'string' || !target || /[\\\0?#]/.test(target) || target.startsWith('/') || /^[a-z][a-z0-9+.-]*:/i.test(target)) throw new Error('Unsupported link target');
     const name = wiki && !target.toLowerCase().endsWith('.md') ? `${target}.md` : target;
-    if (!name.toLowerCase().endsWith('.md')) throw new Error('Only Markdown files can be opened');
+    if (wiki && !name.toLowerCase().endsWith('.md')) throw new Error('Wikilinks require Markdown files');
     const relative = posix.normalize(posix.join(posix.dirname(source), name));
     if (relative === '..' || relative.startsWith('../')) throw new Error('Link is outside this workspace');
     if (!wiki || name.startsWith('./') || name.startsWith('../')) { await checked(relative, 'file'); return { path: relative }; }
@@ -86,24 +107,25 @@ export async function createWorkbench(root, { trash = macTrash, move = macRename
   function save(path, content, version) {
     return serialize(async () => {
       if (typeof content !== 'string' || typeof version !== 'string') throw new Error('Invalid save');
-      const file = await checked(path, 'file');
-      const before = await fs.readFile(file);
+      const file = await checked(path, 'file'); rejectBinaryName(path);
+      const before = await documentBytes(file); decodeDocument(before);
       if (hash(before) !== version) { const e = new Error('File changed on disk. Copy your changes, then reopen it.'); e.status = 409; throw e; }
-      const bytes = Buffer.from(content, 'utf8');
+      const bytes = Buffer.from(content, 'utf8'); decodeDocument(bytes);
       if (!before.equals(bytes)) await fs.writeFile(file, bytes);
       return { version: hash(bytes) };
     });
   }
   function validateName(name, kind) {
     if (typeof name !== 'string' || !name.trim() || name === '.' || name === '..' || /[\/\\\0]/.test(name)) throw new Error('Enter a single valid name');
-    if (kind === 'file' && !name.toLowerCase().endsWith('.md')) throw new Error('Markdown filenames must end in .md');
+    if (protectedName(name)) throw new Error('Protected path is not available in Workbench');
   }
   async function inspect(path, kind) {
     if (!path || !['file', 'directory'].includes(kind)) throw new Error('Choose a file or folder');
     const file = await checked(path, kind);
     const stat = await fs.stat(file, { bigint: true });
     const identity = `${stat.dev}:${stat.ino}:${stat.mtimeNs}:${stat.size}`;
-    const version = kind === 'file' ? `${identity}:${hash(await fs.readFile(file))}` : identity;
+    let version = identity;
+    if (kind === 'file') { rejectBinaryName(path); const bytes = await documentBytes(file); decodeDocument(bytes); version = `${identity}:${hash(bytes)}`; }
     return { version };
   }
   function create(parent, name, kind) {

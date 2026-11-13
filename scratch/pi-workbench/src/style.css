@@ -14,6 +14,12 @@
   --accent: #285e58;
   --accent-text: #ffffff;
   --focus: #397b74;
+  --code-keyword: #6c2ea6;
+  --code-name: #1a4fb6;
+  --code-type: #086a64;
+  --code-string: #37680f;
+  --code-number: #925b0b;
+  --code-comment: #606b65;
   color: var(--text);
   background: var(--page);
 }
@@ -31,6 +37,12 @@
   --accent: #e0e0e0;
   --accent-text: #191919;
   --focus: #c9c9c9;
+  --code-keyword: #caa9ff;
+  --code-name: #9ecbff;
+  --code-type: #7dd3c7;
+  --code-string: #b7df92;
+  --code-number: #f1c98b;
+  --code-comment: #a9b1bc;
   --foreground: 0 0% 90%;
   --muted-foreground: 0 0% 70%;
   --muted: 0 0% 20%;

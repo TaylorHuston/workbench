@@ -14,13 +14,30 @@ async function fixture(t) {
   return { root, trashDir, store: await createWorkbench(root, { trash: (path) => rename(path, join(trashDir, basename(path))) }) };
 }
 
-test('lists hidden directories and Markdown, excludes non-Markdown and symlinks', async (t) => {
-  const { store } = await fixture(t);
-  assert.deepEqual((await store.list('')).map((item) => item.name), ['.hidden']);
+test('lists regular files and hidden directories, excludes symlinks and protected paths', async (t) => {
+  const { root, store } = await fixture(t);
+  await writeFile(join(root, '.env.test'), 'fixture'); await writeFile(join(root, 'auth.json'), '{}');
+  await mkdir(join(root, 'secrets')); await writeFile(join(root, 'secrets', 'note.md'), 'fixture');
+  assert.deepEqual((await store.list('')).map((item) => item.name), ['.hidden', 'private.json']);
   assert.deepEqual((await store.list('.hidden')).map((item) => item.name), ['note.md']);
-  await assert.rejects(store.read('private.json'), /Markdown/);
+  assert.equal((await store.read('private.json')).content, '{}');
+  await assert.rejects(store.read('.env.test'), /protected/i);
+  await assert.rejects(store.read('auth.json'), /protected/i);
+  await assert.rejects(store.read('secrets/note.md'), /protected/i);
   await assert.rejects(store.list('../'), /Invalid path/);
   await assert.rejects(store.list('outside'), /Symbolic links/);
+});
+
+test('refuses binary, invalid UTF-8 and oversized files without changing them', async (t) => {
+  const { root, store } = await fixture(t);
+  const samples = [['binary.dat', Buffer.from([0x41, 0, 0x42])], ['invalid.dat', Buffer.from([0xff, 0xfe])], ['image.png', Buffer.from('valid UTF-8 but a binary format')], ['large.txt', Buffer.alloc(5 * 1024 * 1024 + 1, 65)]];
+  for (const [name, bytes] of samples) {
+    await writeFile(join(root, name), bytes);
+    await assert.rejects(store.read(name), /binary|UTF-8|large/i);
+    await assert.rejects(store.inspect(name, 'file'), /binary|UTF-8|large/i);
+    await assert.rejects(store.save(name, 'replace', 'bogus'), /binary|UTF-8|large/i);
+    assert.deepEqual(await readFile(join(root, name)), bytes);
+  }
 });
 
 test('resolves relative links and unambiguous wikilinks without escaping the workspace', async (t) => {
@@ -44,13 +61,25 @@ test('reads, saves and refuses stale writes without overwriting', async (t) => {
   await writeFile(join(root, path), 'mixed\r\nlines\n'); await assert.rejects(store.read(path), /Mixed/);
 });
 
-test('creates Markdown and folders without overwriting or escaping the root', async (t) => {
+test('preserves code file bytes and refuses stale or binary saves', async (t) => {
+  const { root, store } = await fixture(t); const path = 'code.ts';
+  await writeFile(join(root, path), '\uFEFFconst value = 1;\r\n');
+  const first = await store.read(path); assert.equal(first.lineEnding, 'crlf'); assert.ok(first.content.startsWith('\uFEFF'));
+  const saved = await store.save(path, '\uFEFFconst value = 2;\r\n', first.version);
+  await assert.rejects(store.save(path, 'bad\0content', saved.version), /binary/i);
+  await writeFile(join(root, path), 'external change\r\n');
+  await assert.rejects(store.save(path, 'overwrite\r\n', saved.version), /changed on disk/i);
+  assert.equal(await readFile(join(root, path), 'utf8'), 'external change\r\n');
+});
+
+test('creates text files and folders without overwriting or escaping the root', async (t) => {
   const { root, store } = await fixture(t);
   assert.deepEqual(await store.create('', 'notes', 'directory'), { path: 'notes' });
   assert.deepEqual(await store.create('notes', 'one.md', 'file'), { path: 'notes/one.md' });
   assert.equal(await readFile(join(root, 'notes/one.md'), 'utf8'), '');
   await assert.rejects(store.create('notes', 'one.md', 'file'), /exist/i);
-  await assert.rejects(store.create('', 'bad.txt', 'file'), /\.md/);
+  assert.deepEqual(await store.create('', 'new.txt', 'file'), { path: 'new.txt' });
+  await assert.rejects(store.create('', '.env.local', 'file'), /protected/i);
   await assert.rejects(store.create('', '../escape', 'directory'), /valid name/);
   await assert.rejects(store.create('outside', 'escape.md', 'file'), /Symbolic links/);
 });
@@ -58,7 +87,7 @@ test('creates Markdown and folders without overwriting or escaping the root', as
 test('renames files and folders without replacing existing items', async (t) => {
   const { root, store } = await fixture(t);
   const file = await store.inspect('.hidden/note.md', 'file');
-  await assert.rejects(store.rename('.hidden/note.md', 'file', 'note.txt', file.version), /\.md/);
+  await assert.rejects(store.rename('.hidden/note.md', 'file', '.env', file.version), /protected/i);
   await store.create('.hidden', 'other.md', 'file');
   await assert.rejects(store.rename('.hidden/note.md', 'file', 'other.md', file.version), /already exists/);
   await store.rename('.hidden/note.md', 'file', 'renamed.md', file.version);
@@ -88,9 +117,9 @@ test('moves files and empty folders to an injected Trash; rejects stale and none
   assert.deepEqual((await readdir(trashDir)).sort(), ['.hidden', 'note.md']);
 });
 
-test('HTTP scopes Markdown file operations to the selected workspace', async (t) => {
+test('HTTP scopes text file operations to the selected workspace', async (t) => {
   const { root, trashDir, store } = await fixture(t); const other = join(root, 'other'); await mkdir(other);
-  await writeFile(join(other, 'note.md'), '# other\n'); await writeFile(join(other, 'private.txt'), 'not listed');
+  await writeFile(join(other, 'note.md'), '# other\n'); await writeFile(join(other, 'code.ts'), 'export const value = 1;\n');
   await symlink(join(root, '.hidden'), join(other, 'outside'));
   const server = createServerFor(store, undefined, { createWorkspace: (path) => createWorkbench(path, { trash: (file) => rename(file, join(trashDir, basename(file))), move: rename }) });
   await new Promise((resolve) => server.listen(0, '127.0.0.1', resolve)); t.after(() => new Promise((resolve) => server.close(resolve)));
@@ -98,7 +127,8 @@ test('HTTP scopes Markdown file operations to the selected workspace', async (t)
   const q = (path, workspace = other) => new URLSearchParams({ workspace, path }).toString();
   const defaultRoot = await (await fetch(`${url}/api/workspace-root`)).json();
   assert.equal(defaultRoot.root, await realpath(root)); assert.equal(defaultRoot.label, await realpath(root)); assert.match(defaultRoot.id, /^[a-f0-9]{64}$/);
-  assert.deepEqual((await (await fetch(`${url}/api/list?${q('')}`)).json()).map((item) => item.name), ['note.md']);
+  assert.deepEqual((await (await fetch(`${url}/api/list?${q('')}`)).json()).map((item) => item.name), ['code.ts', 'note.md']);
+  const code = await (await fetch(`${url}/api/file?${q('code.ts')}`)).json(); assert.match(code.content, /export const/);
   assert.equal((await fetch(`${url}/api/list?${q('outside')}`)).status, 400);
   assert.equal((await fetch(`${url}/api/list?${q('', 'relative')}`)).status, 400);
   const file = await (await fetch(`${url}/api/file?${q('note.md')}`)).json(); assert.equal(file.content, '# other\n');

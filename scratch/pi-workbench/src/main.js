@@ -1,5 +1,5 @@
 import { EditorState, StateEffect } from '@codemirror/state';
-import { ensureSyntaxTree, syntaxTree } from '@codemirror/language';
+import { ensureSyntaxTree, syntaxTree, syntaxHighlighting } from '@codemirror/language';
 import { EditorView, ViewPlugin, keymap, placeholder } from '@codemirror/view';
 import { defaultKeymap, history, historyKeymap } from '@codemirror/commands';
 import { markdown } from '@codemirror/lang-markdown';
@@ -10,6 +10,7 @@ import { inlineCodePreview } from './markdown/inlineCodePreview.js';
 import { frontmatterPreview, frontmatterTheme } from './markdown/frontmatterPreview.js';
 import { nonstandardTablePreview, nonstandardTableTheme } from './markdown/nonstandardTablePreview.js';
 import { tableCellPreview } from './markdown/tableCellPreview.js';
+import { isMarkdown, fileLanguage, codeHighlight } from './file-language.js';
 import { getWorkspace, getDefaultWorkspace, getDefaultWorkspaceLabel, getWorkspaceName, getWorkspaceId, getDefaultWorkspaceId, workspacePathForId, selectWorkspace, showWorkspaceError } from './workspace.js';
 import { fileUrl, parseFileUrl, sessionUrl, parseSessionUrl } from './file-routes.js';
 import './style.css';
@@ -182,10 +183,13 @@ async function openFile(path, button, prefetched) {
     updateStatus('Opening…'); const file = prefetched ?? await api(`/api/file?${query(path)}`);
     if (view && view.state.doc.toString() !== before) { updateStatus('Editor changed while opening; try again.'); return false; }
     view?.destroy(); current = path; original = normalize(file.content); version = file.version; ending = file.lineEnding; stale = false;
+    const markdownFile = isMarkdown(path), language = markdownFile ? null : fileLanguage(path);
     $('#empty').hidden = true; $('#document').hidden = false; $('#filename').textContent = path.split('/').at(-1); $('#document-path').textContent = displayPath(path);
+    $('.document-kind').textContent = markdownFile ? 'Markdown document' : `${language.name} file`;
     document.querySelectorAll('.file.active').forEach((node) => node.classList.remove('active')); button?.classList.add('active'); select(path, 'file');
     let autoTable;
-    const state = EditorState.create({ doc: original, extensions: [history(), keymap.of([...defaultKeymap, ...historyKeymap]), markdown({ extensions: [GFM] }), EditorView.lineWrapping, EditorView.contentAttributes.of({ 'aria-label': 'Markdown source editor' }), placeholder('Start writing…'), collapseOnSelectionFacet.of(true), mouseSelectingField, mouseSelection, livePreviewPlugin, markdownStylePlugin, codeMirrorListPreview, inlineCodePreview, frontmatterPreview, frontmatterTheme, nonstandardTablePreview, nonstandardTableTheme, tableCellPreview, linkPlugin(), editorTheme, EditorView.updateListener.of((update) => {
+    const markdownExtensions = markdownFile ? [markdown({ extensions: [GFM] }), collapseOnSelectionFacet.of(true), mouseSelectingField, mouseSelection, livePreviewPlugin, markdownStylePlugin, codeMirrorListPreview, inlineCodePreview, frontmatterPreview, frontmatterTheme, nonstandardTablePreview, nonstandardTableTheme, tableCellPreview, linkPlugin()] : [];
+    const state = EditorState.create({ doc: original, extensions: [history(), keymap.of([...defaultKeymap, ...historyKeymap]), ...(markdownFile ? markdownExtensions : [language.extension, syntaxHighlighting(codeHighlight)]), EditorView.lineWrapping, EditorView.contentAttributes.of({ 'aria-label': markdownFile ? 'Markdown source editor' : `${language.name} source editor` }), placeholder('Start writing…'), editorTheme, EditorView.updateListener.of((update) => {
       if (update.docChanged) updateStatus();
       if (!autoTable) return;
       if (update.docChanged) autoTable = { from: update.changes.mapPos(autoTable.from, 1), to: update.changes.mapPos(autoTable.to, 1) };
@@ -195,12 +199,12 @@ async function openFile(path, button, prefetched) {
         autoTable = undefined; editor.dispatch({ effects: setTableSourceMode.of({ ...range, showSource: false }) });
       });
     })] });
-    // Let the upstream table field see the complete initial syntax tree, including long documents.
-    ensureSyntaxTree(state, state.doc.length, 500);
-    view = new EditorView({ parent: $('#editor'), state: state.update({ effects: StateEffect.appendConfig.of(tableEditorPlugin()) }).state });
+    // Only Markdown uses the preview widgets and table source-mode field.
+    if (markdownFile) ensureSyntaxTree(state, state.doc.length, 500);
+    view = new EditorView({ parent: $('#editor'), state: markdownFile ? state.update({ effects: StateEffect.appendConfig.of(tableEditorPlugin()) }).state : state });
     // Links are editable on ordinary click; only a modifier follows them.
-    view.dom.addEventListener('click', (event) => { if (event.target instanceof Element && event.target.closest('.cm-link-widget')) event.preventDefault(); }, true);
-    view.dom.addEventListener('mousedown', (event) => {
+    if (markdownFile) view.dom.addEventListener('click', (event) => { if (event.target instanceof Element && event.target.closest('.cm-link-widget')) event.preventDefault(); }, true);
+    if (markdownFile) view.dom.addEventListener('mousedown', (event) => {
       if (event.button !== 0 || !(event.metaKey || event.ctrlKey) || !(event.target instanceof Element)) return;
       const element = event.target.closest('.cm-link-widget, .cm-link-source');
       if (!element) return;
@@ -224,7 +228,7 @@ async function openFile(path, button, prefetched) {
         view.dispatch({ selection: { anchor: line.from + offset }, scrollIntoView: true }); view.focus();
       }
     };
-    for (const event of ['mousedown', 'beforeinput', 'paste', 'drop']) view.dom.addEventListener(event, blockTableEdit, true);
+    if (markdownFile) for (const event of ['mousedown', 'beforeinput', 'paste', 'drop']) view.dom.addEventListener(event, blockTableEdit, true);
     updateStatus();
     if (!sessionRestoring) sessionContextReady = rememberDocument();
     return true;
@@ -317,7 +321,7 @@ async function create(kind) {
   if (!getWorkspace() || managing || saving || opening || renaming) return;
   const target = { ...selected }; managing = true; updateControls();
   try {
-    const name = prompt(kind === 'file' ? 'New Markdown file name (include .md):' : 'New folder name:'); if (name === null) return;
+    const name = prompt(kind === 'file' ? 'New file name:' : 'New folder name:'); if (name === null) return;
     $('#tree-status').textContent = 'Working…';
     const parent = target.kind === 'directory' ? target.path : parentOf(target.path);
     await api('/api/entry', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ workspace: getWorkspace(), action: 'create', kind, parent, name }) });

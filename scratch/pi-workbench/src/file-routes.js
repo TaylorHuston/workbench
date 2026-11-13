@@ -11,13 +11,13 @@ export function parseSessionUrl(input) {
 
 export function fileUrl(workspaceId, path) {
   if (!/^[a-f0-9]{64}$/.test(workspaceId)) throw new Error('Invalid workspace ID');
-  if (path !== undefined && !validFile(path)) throw new Error('Invalid Markdown path');
+  if (path !== undefined && !validFile(path)) throw new Error('Invalid file path');
   const query = new URLSearchParams({ workspace: workspaceId });
   if (path !== undefined) query.set('file', path);
   return `/?${query}`;
 }
 function validFile(path) {
-  return typeof path === 'string' && !!path && !path.startsWith('/') && !path.includes('\0') && !path.includes('\\') && path.toLowerCase().endsWith('.md') && path.split('/').every((part) => part && part !== '.' && part !== '..');
+  return typeof path === 'string' && !!path && !path.startsWith('/') && !path.includes('\0') && !path.includes('\\') && path.split('/').every((part) => part && part !== '.' && part !== '..');
 }
 export function parseFileUrl(input) {
   const url = new URL(input, 'http://127.0.0.1');

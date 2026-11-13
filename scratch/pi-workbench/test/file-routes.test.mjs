@@ -12,15 +12,15 @@ test('round-trips only a valid session key in a session URL', () => {
   assert.throws(() => sessionUrl('bad'), /Invalid/);
 });
 test('round-trips file and workspace URLs without an absolute workspace path', () => {
-  for (const path of ['notes/name with spaces.md', 'notes/#heading & emoji 🌲.md', 'SOME.MD']) {
+  for (const path of ['notes/name with spaces.md', 'notes/#heading & emoji 🌲.md', 'SOME.MD', 'src/app.ts', '.gitignore', 'LICENSE']) {
     const url = fileUrl(id, path);
     assert.deepEqual(parseFileUrl(url), { workspaceId: id, path });
     assert.ok(!url.includes('/Users/'));
   }
   assert.deepEqual(parseFileUrl(fileUrl(id)), { workspaceId: id, path: null });
 });
-test('rejects malformed IDs, traversal, non-Markdown paths and duplicate query fields', () => {
-  for (const path of ['../escape.md', '/absolute.md', 'a/./b.md', 'a//b.md', 'a\\b.md', 'file.txt']) {
+test('rejects malformed IDs, traversal and duplicate query fields', () => {
+  for (const path of ['../escape.md', '/absolute.md', 'a/./b.md', 'a//b.md', 'a\\b.md']) {
     assert.throws(() => fileUrl(id, path), /Invalid/);
   }
   assert.equal(parseFileUrl('/?workspace=bad&file=note.md'), null);

@@ -27,7 +27,8 @@ const agent = {
       setTimeout(() => { emit({ type: 'delta', text: ' response' }); emit({ type: 'message', value: { role: 'assistant', text: '**Streaming** response' } }); }, 1800);
       return { accepted: true };
     }
-    if (message !== 'fixture question' || document !== 'second.md') throw new Error('Unexpected fixture prompt context'); return { accepted: true };
+    const expectedDocument = process.env.FIXTURE_CODE ? 'app.ts' : 'second.md';
+    if (message !== 'fixture question' || document !== expectedDocument) throw new Error('Unexpected fixture prompt context'); return { accepted: true };
   },
   subscribe: (listener) => { listeners.add(listener); if (process.env.FIXTURE_DELAY_SNAPSHOT) setTimeout(() => { if (listeners.has(listener)) listener({ type: 'snapshot', value: active }); }, 1200); else listener({ type: 'snapshot', value: active }); return () => listeners.delete(listener); },
 };
