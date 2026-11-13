@@ -1,8 +1,9 @@
 import { getWorkspace, refreshWorkspaces, selectWorkspace, showWorkspaceError, workspaceAvailable } from './workspace.js';
 import { extensionDialogEvent, extensionDialogsDisconnected } from './extension-dialogs.js';
+import { renderChatMarkdown } from './chat-markdown.js';
 
 const $ = (selector) => document.querySelector(selector);
-let state = null, live = null, lastError = '', draftSessionId = null, pendingNew = false, editorSessionKey = null;
+let state = null, live = null, liveText = '', lastError = '', draftSessionId = null, pendingNew = false, editorSessionKey = null;
 let sessionsLoaded = false, listGeneration = 0, sessionVersion = 0, cachedSessions = [], sessionLoad;
 const archiveVersions = new Map();
 const activeHere = () => !!state && state.cwd === getWorkspace();
@@ -17,7 +18,7 @@ function status(message) { $('#agent-status').textContent = message; }
 function row(role, text) {
   const item = document.createElement('article'); item.className = `agent-message ${role}`;
   const label = document.createElement('strong'); label.textContent = role === 'user' ? 'You' : 'Pi';
-  const body = document.createElement('div'); body.textContent = text; item.append(label, body); $('#agent-transcript').append(item);
+  const body = document.createElement('div'); body.className = 'message-body'; renderChatMarkdown(body, text); item.append(label, body); $('#agent-transcript').append(item);
   $('#agent-transcript').scrollTop = $('#agent-transcript').scrollHeight; return body;
 }
 function controls() {
@@ -40,7 +41,7 @@ function visibleWarning(message) {
   return (message || '').replace(/\b\d+ skill discovery warning\(s\)\.\s*/g, '').replace(/Global extensions are active\. Basic dialogs are supported; custom terminal UI is not\.\s*/g, '').trim();
 }
 function snapshot(value) {
-  state = value; live = null; $('#agent-transcript').replaceChildren();
+  state = value; live = null; liveText = ''; $('#agent-transcript').replaceChildren();
   if (activeHere() && state.key !== editorSessionKey) {
     editorSessionKey = state.key;
     document.dispatchEvent(new CustomEvent('agent-session-change', { detail: { key: state.key, created: pendingNew } }));
@@ -49,7 +50,7 @@ function snapshot(value) {
     const p = document.createElement('p'); p.className = 'agent-placeholder'; p.textContent = 'Choose or start a session in this workspace.'; $('#agent-transcript').append(p);
   } else {
     for (const message of state.messages) row(message.role, message.text);
-    if (state.partial) live = row('assistant', state.partial);
+    if (state.partial) { liveText = state.partial; live = row('assistant', liveText); }
   }
   controls();
   if ($('#agent-message').value.trim() && draftSessionId && state?.key !== draftSessionId) status('Draft belongs to another session; copy or clear it before sending.');
@@ -60,8 +61,18 @@ events.onmessage = ({ data }) => {
   const event = JSON.parse(data);
   if (event.type === 'snapshot') snapshot(event.value);
   else if (event.type === 'busy' && state) { state.busy = event.value; lastError = ''; controls(); status('Running…'); }
-  else if (event.type === 'delta' && activeHere()) { if (!live) live = row('assistant', ''); live.textContent += event.text; $('#agent-transcript').scrollTop = $('#agent-transcript').scrollHeight; }
-  else if (event.type === 'message' && activeHere()) { if (event.value.role === 'assistant' && live) { live.parentElement.remove(); live = null; } row(event.value.role, event.value.text); }
+  else if (event.type === 'delta' && activeHere()) {
+    if (!live) { liveText = ''; live = row('assistant', ''); }
+    liveText += event.text; const target = live;
+    if (!target.dataset.renderPending) {
+      target.dataset.renderPending = 'true'; requestAnimationFrame(() => {
+        delete target.dataset.renderPending;
+        if (live !== target || !target.isConnected) return;
+        renderChatMarkdown(target, liveText); $('#agent-transcript').scrollTop = $('#agent-transcript').scrollHeight;
+      });
+    }
+  }
+  else if (event.type === 'message' && activeHere()) { if (event.value.role === 'assistant' && live) { live.parentElement.remove(); live = null; liveText = ''; } row(event.value.role, event.value.text); }
   else if (event.type === 'tool') status(`${event.phase === 'start' ? 'Running' : event.isError ? 'Failed' : 'Finished'} tool: ${event.name}`);
   else if (event.type === 'error') { lastError = event.message; status(lastError); }
   else if (event.type === 'archives_changed' && sessionsLoaded) applyArchiveChange(event.key, event.archived);

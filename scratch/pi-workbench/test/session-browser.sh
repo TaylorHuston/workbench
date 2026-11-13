@@ -49,6 +49,23 @@ agent-browser --session "$session" click '#session-manage' >/dev/null
 agent-browser --session "$session" find text 'second.md' click --exact >/dev/null
 agent-browser --session "$session" wait --fn "document.querySelector('#filename').textContent === 'second.md' && new URL(location.href).searchParams.get('session') === '$one'" >/dev/null
 agent-browser --session "$session" screenshot /tmp/pi-workbench-session-layout.png >/dev/null
+agent-browser --session "$session" focus '.cm-content' >/dev/null
+agent-browser --session "$session" keyboard inserttext ' SIDEBAR-DRAFT' >/dev/null
+agent-browser --session "$session" fill '#agent-message' 'unsent message' >/dev/null
+agent-browser --session "$session" click '#sidebar-toggle' >/dev/null
+agent-browser --session "$session" wait --fn "document.querySelector('.sidebar').classList.contains('is-collapsed') && document.querySelector('#sidebar-toggle').getAttribute('aria-expanded') === 'false' && document.querySelector('.sidebar').getBoundingClientRect().width === 52 && document.querySelector('.cm-content').textContent.includes('SIDEBAR-DRAFT') && document.querySelector('#agent-message').value === 'unsent message' && new URL(location.href).searchParams.get('session') === '$one'" >/dev/null
+agent-browser --session "$session" screenshot /tmp/pi-workbench-sidebar-collapsed.png >/dev/null
+agent-browser --session "$session" click '#sidebar-toggle' >/dev/null
+agent-browser --session "$session" wait --fn "!document.querySelector('.sidebar').classList.contains('is-collapsed') && document.querySelector('#sidebar-toggle').getAttribute('aria-expanded') === 'true'" >/dev/null
+agent-browser --session "$session" fill '#agent-message' '' >/dev/null
+agent-browser --session "$session" focus '.cm-content' >/dev/null
+agent-browser --session "$session" press Meta+z >/dev/null
+agent-browser --session "$session" wait --fn "document.querySelector('#save').disabled" >/dev/null
+agent-browser --session "$session" set viewport 390 844 >/dev/null
+agent-browser --session "$session" click '#sidebar-toggle' >/dev/null
+agent-browser --session "$session" wait --fn "document.querySelector('.sidebar').getBoundingClientRect().height === 48 && document.querySelector('#sidebar-toggle').getAttribute('aria-label') === 'Expand sidebar'" >/dev/null
+agent-browser --session "$session" click '#sidebar-toggle' >/dev/null
+agent-browser --session "$session" set viewport 1280 720 >/dev/null
 agent-browser --session "$session" select '#session-select' "$two" >/dev/null
 agent-browser --session "$session" wait --fn "new URL(location.href).searchParams.get('session') === '$two' && document.querySelector('#document').hidden" >/dev/null
 agent-browser --session "$session" find text 'first.md' click --exact >/dev/null
@@ -115,8 +132,10 @@ agent-browser --session "$session" click '#session-new' >/dev/null
 agent-browser --session "$session" wait --fn "new URL(location.href).searchParams.get('session') === '$three' && document.querySelector('#filename').textContent === 'second.md'" >/dev/null
 agent-browser --session "$session" select '#session-select' "$one" >/dev/null
 agent-browser --session "$session" wait --fn "document.querySelector('#filename').textContent === 'second.md'" >/dev/null
+agent-browser --session "$session" click '#sidebar-toggle' >/dev/null
 agent-browser --session "$session" reload >/dev/null
-agent-browser --session "$session" wait --fn "document.querySelector('#filename').textContent === 'second.md' && new URL(location.href).searchParams.get('session') === '$one' && !document.querySelector('#agent-status').textContent.includes('stale Workbench lock')" >/dev/null
+agent-browser --session "$session" wait --fn "document.querySelector('#filename').textContent === 'second.md' && new URL(location.href).searchParams.get('session') === '$one' && document.querySelector('.sidebar').classList.contains('is-collapsed') && !document.querySelector('#agent-status').textContent.includes('stale Workbench lock')" >/dev/null
+agent-browser --session "$session" click '#sidebar-toggle' >/dev/null
 agent-browser --session "$session" eval "localStorage.setItem('pi-workbench:session-document:$two', '{bad'); true" >/dev/null
 agent-browser --session "$session" select '#session-select' "$two" >/dev/null
 agent-browser --session "$session" wait --fn "document.querySelector('#document-status').textContent.includes('Could not read') && document.querySelector('#filename').textContent === 'second.md'" >/dev/null

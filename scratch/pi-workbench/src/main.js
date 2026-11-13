@@ -16,6 +16,18 @@ import './style.css';
 import './agent.js';
 
 const $ = (selector) => document.querySelector(selector);
+const sidebar = $('.sidebar'), sidebarToggle = $('#sidebar-toggle');
+function setSidebarCollapsed(collapsed) {
+  sidebar.classList.toggle('is-collapsed', collapsed);
+  sidebarToggle.setAttribute('aria-expanded', String(!collapsed));
+  sidebarToggle.setAttribute('aria-label', collapsed ? 'Expand sidebar' : 'Collapse sidebar');
+  sidebarToggle.title = collapsed ? 'Expand sidebar' : 'Collapse sidebar';
+}
+try { setSidebarCollapsed(localStorage.getItem('pi-workbench-sidebar-collapsed') === 'true'); } catch { setSidebarCollapsed(false); }
+sidebarToggle.addEventListener('click', () => {
+  const collapsed = !sidebar.classList.contains('is-collapsed'); setSidebarCollapsed(collapsed);
+  try { localStorage.setItem('pi-workbench-sidebar-collapsed', String(collapsed)); } catch { /* Keep the choice for this page. */ }
+});
 const themePreference = window.matchMedia('(prefers-color-scheme: dark)');
 let chosenTheme;
 try { chosenTheme = localStorage.getItem('pi-workbench-theme'); } catch { /* Use the system preference. */ }
