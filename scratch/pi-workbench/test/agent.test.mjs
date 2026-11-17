@@ -66,6 +66,17 @@ test('discovers a native Pi session, streams and continues it with earlier conte
   await other.close();
 });
 
+test('opening the already-active session is idempotent while another host remains locked out', async (t) => {
+  const { options, seed } = await setup(t); await seed();
+  const host = createAgentHost(options), other = createAgentHost(options);
+  const [entry] = await host.list(); const opened = await host.open(entry.key);
+  const repeated = await host.open(entry.key);
+  assert.equal(repeated.key, opened.key); assert.equal(repeated.id, opened.id);
+  assert.deepEqual(repeated.messages, opened.messages);
+  await assert.rejects(other.open(entry.key), /already in use/);
+  await host.close();
+});
+
 test('opens a listed session without rescanning and rejects replaced or missing session files', async (t) => {
   const { agentDir, options, seed } = await setup(t); await seed(); await seed();
   const host = createAgentHost(options), sessions = await host.list();

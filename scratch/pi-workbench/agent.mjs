@@ -128,6 +128,8 @@ export function createAgentHost({ agentDir = getAgentDir(), stateDir = join(agen
   async function open(key, newCwd) {
     if (opening) throw new Error('A session is already opening');
     if (busy) throw new Error('Stop the current run before switching sessions');
+    // A repeated request for this host's active session must not contend with its own lock.
+    if (newCwd === undefined && active && active.key === key) return snapshot();
     opening = true; let lock, session;
     try {
       let path, manager; const createdHere = newCwd !== undefined;
