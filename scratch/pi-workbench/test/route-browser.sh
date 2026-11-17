@@ -13,7 +13,7 @@ cleanup() {
 trap cleanup EXIT HUP INT TERM
 mkdir -p "$tmp/app" "$tmp/files" "$tmp/other" "$tmp/home"
 npm run build -- --outDir "$tmp/app/dist" --emptyOutDir >/dev/null
-cp server.mjs agent.mjs archive.mjs workspaces.mjs extension-ui.mjs test/markdown-fixture-server.mjs "$tmp/app/"
+cp server.mjs agent.mjs archive.mjs workspaces.mjs extension-ui.mjs scratch-store.mjs test/markdown-fixture-server.mjs "$tmp/app/"
 ln -s "$PWD/node_modules" "$tmp/app/node_modules"
 printf '# First note\n' > "$tmp/files/first.md"
 printf '# Second note\n' > "$tmp/files/second.md"

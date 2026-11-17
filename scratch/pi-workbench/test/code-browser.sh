@@ -8,7 +8,7 @@ cleanup() { agent-browser --session "$session" close >/dev/null 2>&1 || true; ag
 trap cleanup EXIT HUP INT TERM
 mkdir -p "$tmp/app" "$tmp/files" "$tmp/home"
 npm run build -- --outDir "$tmp/app/dist" --emptyOutDir >/dev/null
-cp server.mjs agent.mjs archive.mjs workspaces.mjs extension-ui.mjs test/markdown-fixture-server.mjs "$tmp/app/"
+cp server.mjs agent.mjs archive.mjs workspaces.mjs extension-ui.mjs scratch-store.mjs test/markdown-fixture-server.mjs "$tmp/app/"
 ln -s "$PWD/node_modules" "$tmp/app/node_modules"
 printf 'export const answer: number = 42;\r\n' > "$tmp/files/app.ts"
 printf '# Fixture\n\n[Open code](app.ts)\n' > "$tmp/files/README.md"

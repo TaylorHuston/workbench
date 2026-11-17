@@ -32,7 +32,7 @@ async function setup(t, { tokensPerSecond = 10000 } = {}) {
   }
   return { cwd, stateDir, agentDir, modelRuntime, faux, options, seed, getCalls: () => calls };
 }
-function run(host, message, document = null) {
+function run(host, message, document = null, scratch = null) {
   return new Promise((resolve, reject) => {
     let started = false; const events = [];
     const timeout = setTimeout(() => { unsubscribe(); reject(new Error('Fixture run timed out')); }, 5000);
@@ -42,7 +42,7 @@ function run(host, message, document = null) {
       if (event.type === 'error') { clearTimeout(timeout); unsubscribe(); reject(new Error(event.message)); }
       if (event.type === 'snapshot' && started && !event.value?.busy) { clearTimeout(timeout); unsubscribe(); resolve(events); }
     });
-    try { host.send(message, document); } catch (error) { clearTimeout(timeout); unsubscribe(); reject(error); }
+    try { host.send(message, document, scratch); } catch (error) { clearTimeout(timeout); unsubscribe(); reject(error); }
   });
 }
 
@@ -93,11 +93,21 @@ test('opens a listed session without rescanning and rejects replaced or missing 
 });
 
 test('includes the active document path in model context without embedding its content', async (t) => {
-  const { cwd, faux, options } = await setup(t); const host = createAgentHost(options); await host.createSession(cwd);
+  const { cwd, agentDir, faux, options } = await setup(t); const host = createAgentHost(options); await host.createSession(cwd);
   let context; faux.setResponses([(value) => { context = JSON.stringify(value.messages); return fauxAssistantMessage('Done.'); }]);
-  await run(host, 'What is this?', 'folder/note.md');
+  await run(host, 'What is this?', 'folder/note.md', '/tmp/fixture-scratch.md');
   assert.match(context, /folder\/note\.md/); assert.match(context, /path relative to the session working directory/);
+  assert.match(context, /fixture-scratch\.md/); assert.match(context, /contents are not included automatically/);
   assert.ok(host.snapshot().messages.some(item => item.text.includes('folder/note.md')));
+  assert.ok(!host.snapshot().messages.some(item => item.text.includes('fixture-scratch.md')));
+  const [saved] = await host.list(); await host.close();
+  const group = `--${(await realpath(cwd)).replace(/^[/\\\\]/, '').replace(/[/\\\\:]/g, '-')}--`;
+  const [native] = await SessionManager.listAll(join(agentDir, 'sessions', group));
+  const entries = SessionManager.open(native.path).getEntries();
+  assert.ok(entries.some(entry => entry.type === 'custom_message' && entry.customType === 'pi-workbench-scratch-context' && entry.display === false));
+  await host.open(saved.key);
+  assert.ok(host.snapshot().messages.some(item => item.text.includes('What is this?')));
+  assert.ok(!host.snapshot().messages.some(item => item.text.includes('fixture-scratch.md')));
   await host.close();
 });
 

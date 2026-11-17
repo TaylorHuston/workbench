@@ -1,6 +1,7 @@
 import { getWorkspace, refreshWorkspaces, selectWorkspace, showWorkspaceError, workspaceAvailable } from './workspace.js';
 import { extensionDialogEvent, extensionDialogsDisconnected } from './extension-dialogs.js';
 import { renderChatMarkdown } from './chat-markdown.js';
+import { prepareScratchForSend } from './scratch.js';
 
 const $ = (selector) => document.querySelector(selector);
 let state = null, live = null, liveText = '', lastError = '', draftSessionId = null, pendingNew = false, editorSessionKey = null;
@@ -53,6 +54,7 @@ function snapshot(value) {
     if (state.partial) { liveText = state.partial; live = row('assistant', liveText); }
   }
   controls();
+  document.dispatchEvent(new CustomEvent('agent-state', { detail: activeHere() ? state : null }));
   if ($('#agent-message').value.trim() && draftSessionId && state?.key !== draftSessionId) status('Draft belongs to another session; copy or clear it before sending.');
   else if (!lastError) status(state?.reloading ? 'Reloading…' : state?.busy ? 'Running…' : activeHere() ? visibleWarning(state.warning) || 'Ready' : '');
 }
@@ -84,10 +86,10 @@ events.onmessage = ({ data }) => {
 events.onerror = () => { extensionDialogsDisconnected(); status('Disconnected; reconnecting…'); };
 events.onopen = () => { lastError = ''; snapshot(state); void refreshWorkspaces(); void loadSessions(); };
 
-async function action(fn) { try { lastError = ''; status(''); await fn(); } catch (error) { lastError = error.message; status(lastError); } }
-async function mayChangeSession() {
-  const from = state?.key, workspace = getWorkspace();
-  const allowed = () => from === state?.key && workspace === getWorkspace() && !state?.busy && !state?.reloading && !$('#agent-message').value.trim();
+async function action(fn, { inline = false } = {}) { try { lastError = ''; if (inline) $('#agent-error').textContent = ''; status(''); await fn(); } catch (error) { lastError = error.message; status(lastError); if (inline) $('#agent-error').textContent = lastError; } }
+async function mayChangeSession({ allowDraft = false } = {}) {
+  const from = state?.key, workspace = getWorkspace(), draft = $('#agent-message').value;
+  const allowed = () => from === state?.key && workspace === getWorkspace() && !state?.busy && !state?.reloading && (allowDraft ? $('#agent-message').value === draft : !$('#agent-message').value.trim());
   if (!allowed()) { status('Finish the current run and clear the unsent message before switching.'); return false; }
   const detail = { allowed };
   if (!document.dispatchEvent(new CustomEvent('session-before-change', { cancelable: true, detail }))) return false;
@@ -218,6 +220,7 @@ document.addEventListener('open-session-route', (event) => { void (async () => {
 $('#agent-reload').addEventListener('click', () => action(async () => { status('Reloading…'); await api('/api/agent/reload', { key: state?.key }); }));
 $('#agent-close').addEventListener('click', () => action(async () => {
   if ($('#agent-message').value.trim() && !confirm('Discard the unsent message and close the session?')) return;
+  if (!(await mayChangeSession({ allowDraft: true }))) return;
   await api('/api/agent/close', { key: state?.key }); $('#agent-message').value = ''; draftSessionId = null;
 }));
 $('#agent-stop').addEventListener('click', () => action(async () => { status('Stopping…'); await api('/api/agent/stop', { key: state?.key }); }));
@@ -230,8 +233,11 @@ $('#agent-form').addEventListener('submit', (event) => { event.preventDefault();
   const message = $('#agent-message').value; if (!message.trim()) return;
   if (draftSessionId && draftSessionId !== state?.key) throw new Error('Draft belongs to another session; copy or clear it before sending.');
   if (!activeHere()) throw new Error('Open a session in this workspace before sending.');
-  const context = { key: state?.key }; document.dispatchEvent(new CustomEvent('agent-document-context', { detail: context }));
+  const key = state.key;
+  await prepareScratchForSend(key);
+  if (!activeHere() || state.key !== key || $('#agent-message').value !== message) throw new Error('The session or message changed; review it before sending.');
+  const context = { key }; document.dispatchEvent(new CustomEvent('agent-document-context', { detail: context }));
   if (context.error) throw new Error(context.error);
   await api('/api/agent/send', { key: state?.key, message, document: context.path ?? null });
   if ($('#agent-message').value === message) { $('#agent-message').value = ''; draftSessionId = null; }
-}); });
+}, { inline: true }); });

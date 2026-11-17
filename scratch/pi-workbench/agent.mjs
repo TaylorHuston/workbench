@@ -22,7 +22,7 @@ export function createAgentHost({ agentDir = getAgentDir(), stateDir = join(agen
     return value ? { role: message.role, text: value } : null;
   };
   const snapshot = () => active ? {
-    id: active.session.sessionId, key: active.key, cwd: active.cwd, busy, reloading: opening, warning: active.warning,
+    id: active.session.sessionId, key: active.key, cwd: active.cwd, busy, reloading: opening, transient: active.createdHere, warning: active.warning,
     model: active.session.model ? `${active.session.model.provider}/${active.session.model.id}` : null,
     tools: active.session.getActiveToolNames(),
     messages: active.session.messages.map(project).filter(Boolean), partial,
@@ -242,7 +242,7 @@ export function createAgentHost({ agentDir = getAgentDir(), stateDir = join(agen
     publish({ type: 'sessions_changed' });
     return { name: active.session.sessionManager.getSessionName() };
   }
-  function send(message, document = null) {
+  function send(message, document = null, scratchPath = null) {
     if (!active) throw new Error('Open a session first');
     if (active.unsafe) throw new Error('Extension failure or incomplete reload; close and reopen the session before continuing');
     if (busy || opening) throw new Error('Agent is already running');
@@ -250,7 +250,10 @@ export function createAgentHost({ agentDir = getAgentDir(), stateDir = join(agen
     busy = true; partial = ''; publish({ type: 'busy', value: true });
     const running = active, session = active.session;
     const prompt = document === null ? message : `${message}\n\n[Workbench context: the document open in the editor is ${JSON.stringify(document)} (path relative to the session working directory). Read it from disk if needed; this is a path, not document content.]`;
-    runPromise = session.prompt(prompt).catch((error) => publish({ type: 'error', message: error.message })).finally(async () => {
+    runPromise = (async () => {
+      if (scratchPath !== null) await session.sendCustomMessage({ customType: 'pi-workbench-scratch-context', content: `Workbench session scratchpad: ${JSON.stringify(scratchPath)}. This is an absolute path to a shared Markdown file; read or edit it when useful. Its contents are not included automatically.`, display: false }, { deliverAs: 'nextTurn' });
+      await session.prompt(prompt);
+    })().catch((error) => publish({ type: 'error', message: error.message })).finally(async () => {
       let appeared = false;
       if (running.createdHere) {
         try { if ((await fs.stat(running.sessionPath)).isFile()) { running.createdHere = false; appeared = true; } }

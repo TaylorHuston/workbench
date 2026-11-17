@@ -7,6 +7,8 @@ import { fileURLToPath } from 'node:url';
 import { execFile } from 'node:child_process';
 import { promisify } from 'node:util';
 import { createAgentHost } from './agent.mjs';
+import { getAgentDir } from '@earendil-works/pi-coding-agent';
+import { createScratchStore } from './scratch-store.mjs';
 
 const appDir = dirname(fileURLToPath(import.meta.url));
 const execFileAsync = promisify(execFile);
@@ -168,7 +170,8 @@ export async function createWorkbench(root, { trash = macTrash, move = macRename
   return { root: base, list, read, save, inspect, create, rename, remove, resolveLink };
 }
 
-export function createServerFor(workbench, agent, { createWorkspace = createWorkbench } = {}) {
+export function createServerFor(workbench, agent, { createWorkspace = createWorkbench, scratchRoot = join(getAgentDir(), 'pi-workbench', 'scratch') } = {}) {
+  const scratch = createScratchStore(scratchRoot);
   const roots = new Map([[workbench.root, Promise.resolve(workbench)]]);
   let writes = Promise.resolve();
   const serialize = (action) => { const operation = writes.then(action); writes = operation.catch(() => {}); return operation; };
@@ -209,6 +212,12 @@ export function createServerFor(workbench, agent, { createWorkspace = createWork
         let data = ''; for await (const chunk of req) { data += chunk; if (data.length > 10_000_000) return json(res, 413, { error: 'File too large' }); }
         const { path, content, version, action, parent, name, kind, key, message, document, archived, cwd, changes, revision, id, value, workspace: workspacePath } = JSON.parse(data);
         if (url.pathname === '/api/agent/dialog') { agent.respondDialog(id, value); return json(res, 200, { ok: true }); }
+        if (url.pathname === '/api/agent/scratch') {
+          if (typeof key !== 'string' || agent.snapshot()?.key !== key) throw new Error('Session changed; review the active session before retrying');
+          if (action === 'open') return json(res, 200, await scratch.read(key));
+          if (action === 'save') return json(res, 200, await scratch.save(key, content, version));
+          throw new Error('Invalid scratch action');
+        }
         if (url.pathname === '/api/agent/workspaces') {
           if (typeof cwd !== 'string' || !isAbsolute(cwd)) throw new Error('Enter an absolute working directory');
           if (action === 'update') {
@@ -232,7 +241,9 @@ export function createServerFor(workbench, agent, { createWorkspace = createWork
             const active = agent.snapshot(); await (await workspace(active.cwd)).inspect(document, 'file');
             if (agent.snapshot()?.key !== key) throw new Error('Session changed while checking document context');
           }
-          return json(res, 200, agent.send(message, document ?? null));
+          const scratchFile = await scratch.read(key);
+          if (agent.snapshot()?.key !== key) throw new Error('Session changed while preparing scratch');
+          return json(res, 200, agent.send(message, document ?? null, scratchFile.path));
         }
         if (url.pathname === '/api/agent/stop') { await agent.stop(); return json(res, 200, { ok: true }); }
         if (url.pathname.startsWith('/api/agent/')) return json(res, 404, { error: 'Not found' });

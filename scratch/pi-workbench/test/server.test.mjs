@@ -179,18 +179,32 @@ test('HTTP accepts dialog replies during session startup and rejects cross-origi
 });
 
 test('HTTP validates active-session document context before sending', async (t) => {
-  const { root, store } = await fixture(t); const calls = [];
-  const agent = { snapshot: () => ({ key: 'current', cwd: root }), send: (message, document) => { calls.push([message, document]); return { accepted: true }; } };
-  const server = createServerFor(store, agent);
+  const { root, store } = await fixture(t); const calls = [], key = 'a'.repeat(64);
+  const agent = { snapshot: () => ({ key, cwd: root }), send: (message, document, scratchPath) => { calls.push([message, document, scratchPath]); return { accepted: true }; } };
+  const server = createServerFor(store, agent, { scratchRoot: join(root, 'scratch-state') });
   await new Promise(resolve => server.listen(0, '127.0.0.1', resolve)); t.after(() => new Promise(resolve => server.close(resolve)));
   const url = `http://127.0.0.1:${server.address().port}`;
   const post = (body) => fetch(`${url}/api/agent/send`, { method: 'POST', headers: { origin: url, 'content-type': 'application/json' }, body: JSON.stringify(body) });
-  assert.equal((await post({ key: 'current', message: 'question', document: '../secret.md' })).status, 400);
-  assert.equal((await post({ key: 'current', message: 'question', document: 'outside/note.md' })).status, 400);
+  assert.equal((await post({ key, message: 'question', document: '../secret.md' })).status, 400);
+  assert.equal((await post({ key, message: 'question', document: 'outside/note.md' })).status, 400);
   assert.equal((await post({ key: 'stale', message: 'question', document: '.hidden/note.md' })).status, 400);
   assert.deepEqual(calls, []);
-  assert.equal((await post({ key: 'current', message: 'question', document: '.hidden/note.md' })).status, 200);
-  assert.deepEqual(calls, [['question', '.hidden/note.md']]);
+  assert.equal((await post({ key, message: 'question', document: '.hidden/note.md' })).status, 200);
+  assert.deepEqual(calls, [['question', '.hidden/note.md', join(root, 'scratch-state', `${key}.md`)]]);
+});
+
+test('HTTP scratch operations require the active session and refuse stale saves', async (t) => {
+  const { root, store } = await fixture(t), key = 'a'.repeat(64);
+  const agent = { snapshot: () => ({ key, cwd: root }) };
+  const server = createServerFor(store, agent, { scratchRoot: join(root, 'scratch-state') });
+  await new Promise(resolve => server.listen(0, '127.0.0.1', resolve)); t.after(() => new Promise(resolve => server.close(resolve)));
+  const url = `http://127.0.0.1:${server.address().port}`;
+  const post = body => fetch(`${url}/api/agent/scratch`, { method: 'POST', headers: { origin: url, 'content-type': 'application/json' }, body: JSON.stringify(body) });
+  assert.equal((await post({ key: 'b'.repeat(64), action: 'open' })).status, 400);
+  const opened = await (await post({ key, action: 'open' })).json();
+  await writeFile(opened.path, 'agent update');
+  const conflict = await post({ key, action: 'save', version: opened.version, content: 'my update' });
+  assert.equal(conflict.status, 409); assert.equal(await readFile(opened.path, 'utf8'), 'agent update');
 });
 
 test('HTTP reload and rename target only the open session', async (t) => {

@@ -8,7 +8,7 @@ cleanup() { agent-browser --session "$session" close >/dev/null 2>&1 || true; if
 trap cleanup EXIT HUP INT TERM
 mkdir -p "$tmp/app" "$tmp/files" "$tmp/home"
 npm run build -- --outDir "$tmp/app/dist" --emptyOutDir >/dev/null
-cp server.mjs agent.mjs archive.mjs workspaces.mjs extension-ui.mjs test/markdown-fixture-server.mjs "$tmp/app/"
+cp server.mjs agent.mjs archive.mjs workspaces.mjs extension-ui.mjs scratch-store.mjs test/markdown-fixture-server.mjs "$tmp/app/"
 ln -s "$PWD/node_modules" "$tmp/app/node_modules"
 env -i PATH="$PATH" HOME="$tmp/home" PI_CODING_AGENT_DIR="$tmp/home/agent" PI_OFFLINE=1 FIXTURE_ROOT="$tmp/files" FIXTURE_SESSIONS=1 FIXTURE_CHAT=1 PORT_FILE="$tmp/port" node "$tmp/app/markdown-fixture-server.mjs" > "$tmp/server.log" 2>&1 & pid=$!
 i=0; while [ ! -s "$tmp/port" ]; do i=$((i+1)); [ "$i" -le 10 ] || exit 1; sleep 1; done

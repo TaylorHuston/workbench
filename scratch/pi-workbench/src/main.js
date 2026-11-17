@@ -11,6 +11,7 @@ import { frontmatterPreview, frontmatterTheme } from './markdown/frontmatterPrev
 import { nonstandardTablePreview, nonstandardTableTheme } from './markdown/nonstandardTablePreview.js';
 import { tableCellPreview } from './markdown/tableCellPreview.js';
 import { isMarkdown, fileLanguage, codeHighlight } from './file-language.js';
+import { scratchDirty, scratchSelected, saveScratch, discardScratch, confirmScratchChange, scratchContextError } from './scratch.js';
 import { getWorkspace, getDefaultWorkspace, getDefaultWorkspaceLabel, getWorkspaceName, getWorkspaceId, getDefaultWorkspaceId, workspacePathForId, selectWorkspace, showWorkspaceError } from './workspace.js';
 import { fileUrl, parseFileUrl, sessionUrl, parseSessionUrl } from './file-routes.js';
 import './style.css';
@@ -133,7 +134,7 @@ async function loadTree(target, path = '') {
       } else {
         const button = document.createElement('button'); button.className = 'file'; button.textContent = item.name; button.title = item.path; button.dataset.entry = item.path;
         button.classList.toggle('selected', selected.path === item.path);
-        button.addEventListener('click', async () => { await routesInitialized; if (await openFile(item.path, button) && !routeApplying) pushFileLocation(item.path); }); target.append(button);
+        button.addEventListener('click', async () => { await routesInitialized; if (await openFile(item.path, button)) { $('#editor-tab').click(); if (!routeApplying) pushFileLocation(item.path); } }); target.append(button);
       }
     }
   } catch (error) { if (generation === treeGeneration && workspace === getWorkspace()) target.textContent = error.message; }
@@ -252,6 +253,7 @@ function discard() {
   discardChanges();
 }
 async function confirmSessionChange(allowed) {
+  if (!(await confirmScratchChange(allowed))) return false;
   if (saving || opening || managing || renaming || sessionRestoring) { updateStatus('Finish the current file operation before switching sessions.'); return false; }
   if (!dirty()) return true;
   const dialog = $('#session-change-dialog');
@@ -352,6 +354,7 @@ document.addEventListener('agent-session-change', (event) => {
 document.addEventListener('agent-document-context', (event) => {
   if (event.detail.key !== editorSessionKey || !sessionContextReady || sessionRestoring) event.detail.error = 'The editor is not ready for this session; choose a document or resolve the existing draft first.';
   else if (dirty() || saving) event.detail.error = 'Save or discard the document before asking about its current contents.';
+  else if (scratchContextError(event.detail.key)) event.detail.error = scratchContextError(event.detail.key);
   else event.detail.path = current ?? null;
 });
 document.addEventListener('session-before-change', (event) => { event.detail.check = confirmSessionChange(event.detail.allowed); });
@@ -359,7 +362,8 @@ document.addEventListener('workspace-before-change', (event) => {
   if (event.defaultPrevented) return;
   if (!routeReady && !routeApplying) { showWorkspaceError('Wait for workspaces to finish loading.'); event.preventDefault(); }
   else if (saving || opening || managing || renaming) { showWorkspaceError('Finish the current file operation before switching workspaces.'); event.preventDefault(); }
-  else if (dirty() && !confirm('Discard unsaved changes and switch workspaces?')) event.preventDefault();
+  else if ((dirty() || scratchDirty()) && !confirm('Discard unsaved document and scratch changes and switch workspaces?')) event.preventDefault();
+  else if (scratchDirty()) discardScratch();
 });
 document.addEventListener('workspace-change', () => {
   editorSessionKey = null; pendingSessionChange = undefined; sessionContextReady = false;
@@ -438,4 +442,4 @@ $('#new-file').addEventListener('click', () => create('file'));
 $('#new-folder').addEventListener('click', () => create('directory'));
 $('#refresh').addEventListener('click', () => { if (!managing) { select('', 'directory'); void loadTree($('#tree')); } });
 window.addEventListener('beforeunload', (event) => { if (dirty() || saving || managing || (renaming && $('#rename-input').value !== current?.split('/').at(-1)) || $('#agent-message').value.trim()) { event.preventDefault(); event.returnValue = ''; } });
-window.addEventListener('keydown', (event) => { if ((event.metaKey || event.ctrlKey) && event.key.toLowerCase() === 's') { event.preventDefault(); void save(); } });
+window.addEventListener('keydown', (event) => { if ((event.metaKey || event.ctrlKey) && event.key.toLowerCase() === 's') { event.preventDefault(); void (scratchSelected() ? saveScratch() : save()); } });
