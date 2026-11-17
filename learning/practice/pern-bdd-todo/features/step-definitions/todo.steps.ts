@@ -37,7 +37,6 @@ When("I reload the page", async function (this: MyWorld) {
   } else {
     throw new Error("Page is not initialized");
   }
-  return "pending";
 });
 
 When("I add a blank task", async function (this: MyWorld) {
