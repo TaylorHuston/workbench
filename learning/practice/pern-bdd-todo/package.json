@@ -4,7 +4,7 @@
   "description": "Practice building a basic PERN TODO app but using strict BDD.",
   "main": "index.js",
   "scripts": {
-    "test": "echo \"Error: no test specified\" && exit 1"
+    "test": "cucumber-js --import tsx/esm --import 'features/step-definitions/**/*.ts' --import 'features/support/**/*.ts' --format summary"
   },
   "keywords": [],
   "author": "",
